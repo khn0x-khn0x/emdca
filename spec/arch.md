@@ -1,0 +1,174 @@
+## **Architecture Specification: Explicitly Modeled Data-Centric Architecture (EMDCA)**.
+
+This document contains the non-negotiable engineering standards for the system. It is written as a strict set of directives for developers to follow without ambiguity.
+
+---
+
+### **I. The Construction Mandate: The Pure Factory**
+
+**The Principle:** Validation is not a check; it is a construction process. Logic is a calculation, not an action. Therefore, the code that makes decisions must be separated from the code that executes them.
+
+#### **MUST USE:**
+
+* **Pure Factories:** All domain logic and decision-making must live exclusively in **Pure Factory Functions**. These functions accept raw, unstructured data and "parse" it into a valid Domain Type.  
+* **Parse, Don't Validate:** Instead of checking if data.is\_valid, try to construct the success type. If the data is invalid, the factory must return a distinct Failure Type.  
+* **Total Functions:** The factory must handle **every** possible input state and return a valid result object (Success or Failure). It must never crash or raise unhandled exceptions on expected domain data.
+
+#### **MUST NOT USE:**
+
+* **Side Effects in Factories:** The factory must **never** perform I/O, database queries, API calls, or read global variables. It must be a pure function of its inputs.  
+* **The "Draft" Object:** Never create an empty or partial object and populate it field-by-field. Objects must be complete and valid from the moment of instantiation.  
+* **Validation Methods:** Never write an .is\_valid() method on a model. If an object exists, it is valid by definition.
+
+---
+
+### **II. The State Mandate: Sum Types Over Product Types**
+
+**The Principle:** Software complexity grows with the number of possible states. We must minimize the state space by making invalid combinations of state unrepresentable.
+
+#### **MUST USE:**
+
+* **Discriminated Unions (Sum Types):** Mutually exclusive realities must be modeled as Unions of distinct Types (e.g., EvaluationResult \= EnterContext | WaitContext).  
+* **Structural Proofs:** Each Context type must contain the specific data required for that reality (e.g., EnterContext must contain an EntryProposal).  
+* **Pattern Matching:** Use structural pattern matching (e.g., match/case) to handle the different realities returned by the factory.
+
+#### **MUST NOT USE:**
+
+* **The God Model (Product Types):** Never use a single class with optional fields to represent conflicting states (e.g., a class containing both entry\_data and exit\_data where one is always None).  
+* **Boolean Flags for State:** Never use boolean flags (e.g., is\_entering, is\_waiting) to determine the state of an object. The **Type** of the object determines the state.
+
+---
+
+### **III. The Control Flow Mandate: Railway Oriented Programming**
+
+**The Principle:** Logic is a flow of data. Branching should be handled as a topology of tracks, not as a series of exceptions or jumps.
+
+#### **MUST USE:**
+
+* **The Railway Switch:** Logic branches must happen inside the Factory. The flow must explicitly guide data onto either a "Success Track" (returning a Success Context) or a "Failure Track" (returning a Wait/Halt Context).  
+* **Explicit Fall-through:** Every logical branch must terminate in a return value. "Doing nothing" must be represented by an explicit WaitContext, not by returning None.
+
+#### **MUST NOT USE:**
+
+* **Exceptions for Control Flow:** Never use try/except to handle domain logic (e.g., InsufficientFundsException). Exceptions are strictly for system failures (Network Down, OOM).  
+* **Implicit Returns:** Never allow a function to return None implicitly. The return type must always be explicit.
+
+---
+
+### **IV. The Execution Mandate: Intent as Data**
+
+**The Principle:** Deciding to do something and doing it are separate concerns. The "Core" decides; the "Shell" executes.
+
+#### **MUST USE:**
+
+* **Command Objects (Intents):** The domain model must return inert, serializable **Data Structures** describing the side effect (e.g., EnterIntent).  
+* **Complete Instructions:** The Intent must contain **all** parameters required for execution. The Shell should never need to query the Context or calculate anything to execute the Intent.
+
+#### **MUST NOT USE:**
+
+* **Service Injection:** Never inject a "Service" or "Client" into a domain model. Models must never call methods like .execute() or .save().  
+* **Closures/Callbacks:** Intents must be pure data (JSON serializable), not functions or code blocks.
+
+---
+
+### **V. The Configuration Mandate: Dependency Injection**
+
+**The Principle:** A model's behavior should be determined entirely by its inputs, enabling reasoning in isolation.
+
+#### **MUST USE:**
+
+* **Context Injection:** Configuration (parameters, thresholds, limits) must be passed into the logic functions as arguments (e.g., config: StrategyConfig).  
+* **Frozen Configs:** Configuration objects must be immutable.
+
+#### **MUST NOT USE:**
+
+* **Hardcoded Constants:** Never bury magic numbers (e.g., if RSI \> 70) inside the logic. All magic numbers must live in the Config object.  
+* **Global Variables:** Never access global state or singletons from within the domain logic.
+
+---
+
+### **VI. The Abstraction Mandate: The Repository Pattern**
+
+**The Principle:** The Domain Core must be agnostic to the mechanism of data storage. Whether data lives in a database, a file, or memory is an implementation detail that must not leak into business logic.
+
+#### **MUST USE:**
+
+* **Storage Interfaces:** The Domain must define *what* data it needs (e.g., `get_session()`) via an interface or abstract contract, but never *how* to get it.
+* **The Repository Implementation:** A concrete class in the Shell that implements the interface, handling the specific SQL queries, file I/O, or cache lookups.
+
+#### **MUST NOT USE:**
+
+* **Direct I/O in Domain:** Never write SQL, file paths, or specific database import statements inside a Domain Model or Factory.
+* **Leaky Abstractions:** Do not return database-specific cursors or ORM objects (like SQLAlchemy Row Proxies) into the Domain. The Repository must return pure Domain Objects.
+
+---
+
+### **VII. The Translation Mandate: Foreign Reality vs. Internal Truth**
+
+**The Principle:** The outside world speaks a chaotic language; the Domain speaks a strict language. We must explicitly model both the **Foreign Reality** (external systems) and the **Internal Truth** (business concepts). Translation is the act of naturalizing the foreign into the internal.
+
+#### **MUST USE:**
+
+* **Foreign Models:** Define Domain Objects that mirror external schemas exactly (e.g., `CoinbaseCandle`). These are not dumb DTOs; they represent the domain's knowledge of the external world.
+* **Declarative Mapping:** Use field aliasing (e.g., `Field(alias="o")`) to handle naming friction declaratively at the type level.
+* **Self-Translation:** The Foreign Model must own the method (e.g., `.to_domain()`) that converts itself into the Internal Truth.
+
+#### **MUST NOT USE:**
+
+* **Imperative Mappers:** Never write standalone functions that copy fields from A to B. Translation logic belongs on the Foreign Model.
+* **Dict Passing:** Never pass raw dictionaries or JSON blobs deep into the system. Validate them against the Foreign Model immediately at the border.
+
+---
+
+### **VIII. The Coordination Mandate: The Orchestrator**
+
+**The Principle:** A system needs a "driver" that does no thinking, only moving. It coordinates the flow of data between the Repository, the Factory, and the Execution shell.
+
+#### **MUST USE:**
+
+* **The Main Loop (Application Service):** A "dumb" procedural loop that performs the following cycle:
+    1.  **Fetch** (Call Repository)
+    2.  **Translate** (Call ACL/Mapper)
+    3.  **Decide** (Call Pure Factory)
+    4.  **Act** (Execute Intent)
+    5.  **Persist** (Call Repository to save state)
+* **Piping:** The Orchestrator treats data as a pipe. It takes the output of step 1 and feeds it as the input to step 2.
+
+#### **MUST NOT USE:**
+
+* **Logic in the Loop:** The Orchestrator must never contain `if` statements related to business rules (e.g., `if price > 100`). Its only logic should be flow control (start/stop/sleep).
+* **Orchestrator Injection:** Never pass the Orchestrator itself into a Domain Model. The Core should not know it is being orchestrated.
+
+---
+
+### **IX. The Workflow Mandate: Process as State Machine**
+
+**The Principle:** The sequence of business steps (A → B → C) is Business Logic, not plumbing. Therefore, workflows must be modeled as State Machines in the Domain, not as procedural scripts in the Service.
+
+#### **MUST USE:**
+
+* **Workflow Models:** Create explicit Domain Models that represent the *lifecycle* of a process (e.g., `SignupWorkflow`).
+* **Next-Step Intents:** The Domain must return an Intent indicating the *next* logical step in the chain (e.g., `return SignupResult(next_step=SendEmailIntent)`).
+* **State Machines:** Use the Factory to determine transitions. The Factory accepts the `CurrentState` + `Input` and returns the `NextState` + `Intent`.
+
+#### **MUST NOT USE:**
+
+* **Procedural Orchestration:** Never write a function in the Service layer that contains a sequence of `if/else` checks to determine the order of operations (e.g., `if user.is_vip: send_gold_email()`).
+* **Hidden Chains:** Do not chain side effects implicitly (e.g., a database trigger that starts a shipping job). The flow must be visible and explicit in the Domain logic.
+
+---
+
+### **X. The Infrastructure Mandate: Capability as Data**
+
+**The Principle:** Infrastructure is a capability to be modeled as Data, not a Service to be executed. The Domain defines the *Topology* and *Intent* of the infrastructure as pure values, while the Shell handles the *Runtime Connection*.
+
+#### **MUST USE:**
+
+* **Infrastructure Models:** Define the "Shape" of the infrastructure using pure Domain Models (e.g., `NatsStream`, `S3BucketConfig`). These models describe *what* the infrastructure looks like, not *how* to connect to it.
+* **Topology as Config:** The generic constraints of the infrastructure (retention policies, subject hierarchies, queue names) must be defined in the Domain, allowing the logic to reason about the topology.
+* **Executor Adapters:** Create "dumb" adapters in the Shell that hold the actual client libraries (e.g., `nats-py`, `boto3`). These adapters receive Intents from the Domain and blindly execute the side effect.
+
+#### **MUST NOT USE:**
+
+* **Active Clients in Domain:** Never import or instantiate live clients (e.g., `nats.connect()`, `boto3.client()`) inside the Domain. The Domain models the *configuration* of the client, not the client instance.
+* **Logic in Adapters:** The Adapter must never make decisions (e.g., "if event type is A, publish to topic B"). It must only execute exactly what the Intent describes.
