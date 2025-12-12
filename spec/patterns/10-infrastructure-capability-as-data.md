@@ -106,7 +106,7 @@ class NatsAdapter:
 The Orchestrator loads the config (Data) and passes it to the Adapter (Executor).
 
 ```python
-async def startup(settings: Settings):
+async def startup(config: AppConfig):
     # 1. Define Topology (Data)
     stream_conf = NatsStreamConfig(
         name="orders", 
@@ -117,7 +117,7 @@ async def startup(settings: Settings):
     )
 
     # 2. Initialize Adapter
-    nc = await nats.connect(settings.nats_url)
+    nc = await nats.connect(config.nats_url)
     adapter = NatsAdapter(nc)
 
     # 3. Apply Topology

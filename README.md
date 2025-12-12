@@ -12,6 +12,7 @@ EMDCA eliminates "conceptual fragmentation" by enforcing strict co-location of l
 | :--- | :--- | :--- |
 | **[Manifesto](manifesto.md)** | The **Philosophy**. Explains *why* traditional architectures fail and why explicit modeling is the cure. | Architects, Leads |
 | **[Architecture Spec](spec/arch.md)** | The **Laws**. The 10 non-negotiable mandates that define the standard. | Developers, AI Agents |
+| **[Structure Guide](spec/structure.md)** | The **Map**. Defines the vertical slice file structure. | Developers |
 | **[Patterns Library](spec/patterns/)** | The **Blueprints**. Idiomatic Python implementations of the mandates. | Everyone |
 
 ---
@@ -22,7 +23,7 @@ EMDCA eliminates "conceptual fragmentation" by enforcing strict co-location of l
 2.  **State:** Use Sum Types (Discriminated Unions). Make invalid states unrepresentable. ([Pattern 02](spec/patterns/02-state-sum-types.md))
 3.  **Control Flow:** Use Railway Oriented Programming. No Exceptions for logic. ([Pattern 03](spec/patterns/03-railway-control-flow.md))
 4.  **Execution:** Return Intents as Data. The Core decides; the Shell executes. ([Pattern 04](spec/patterns/04-execution-intent.md))
-5.  **Configuration:** Use Dependency Injection. No global state or magic numbers. ([Pattern 05](spec/patterns/05-config-injection.md))
+5.  **Configuration:** Treat EnvVars as Foreign Reality. Translate to pure AppConfig. ([Pattern 05](spec/patterns/05-config-injection.md))
 6.  **Abstraction:** Define Storage Protocols. The Domain never performs direct I/O. ([Pattern 06](spec/patterns/06-repository-abstraction.md))
 7.  **Translation:** Use Foreign Models. Declarative mapping of External Reality to Internal Truth. ([Pattern 07](spec/patterns/07-acl-translation.md))
 8.  **Coordination:** Use a Dumb Orchestrator. The loop only moves data; it never thinks. ([Pattern 08](spec/patterns/08-orchestrator-loop.md))

@@ -71,19 +71,20 @@ This document contains the non-negotiable engineering standards for the system. 
 
 ---
 
-### **V. The Configuration Mandate: Dependency Injection**
+### **V. The Configuration Mandate: Foreign Reality vs Internal Truth**
 
-**The Principle:** A model's behavior should be determined entirely by its inputs, enabling reasoning in isolation.
+**The Principle:** Configuration comes from the chaotic outside world (Environment Variables). It is a **Foreign Reality** that must be explicitly translated into a structured **Internal Truth** (Domain Config) before entering the system.
 
 #### **MUST USE:**
 
-* **Context Injection:** Configuration (parameters, thresholds, limits) must be passed into the logic functions as arguments (e.g., config: StrategyConfig).  
-* **Frozen Configs:** Configuration objects must be immutable.
+* **Foreign Models for Env:** Explicitly model the raw environment (e.g., `EnvVars`) using declaration mapping (aliases) to handle the chaotic naming conventions of the OS.
+* **Explicit Translation:** Convert the raw environment model into a pure Domain Config object at the application entry point.
+* **Context Injection:** Pass the resolved Domain Config into logic functions as arguments.
 
 #### **MUST NOT USE:**
 
-* **Hardcoded Constants:** Never bury magic numbers (e.g., if RSI \> 70) inside the logic. All magic numbers must live in the Config object.  
-* **Global Variables:** Never access global state or singletons from within the domain logic.
+* **Magic Binding:** Never use libraries that automatically map `os.environ` directly to Domain Config objects. The translation must be visible.
+* **Global Variables:** Never access `os.environ` or global config singletons from within the domain logic.
 
 ---
 
