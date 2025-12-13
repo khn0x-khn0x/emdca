@@ -11,19 +11,19 @@ EMDCA eliminates "conceptual fragmentation" by enforcing strict co-location of l
 
 ---
 
-## 📚 Documentation Map
+## 🎯 Why EMDCA?
 
-| Document | Purpose | Audience |
-| :--- | :--- | :--- |
-| **[Manifesto](manifesto.md)** | The **Philosophy**. Explains *why* traditional architectures fail and why explicit modeling is the cure. | Architects, Leads |
-| **[Architecture Spec](spec/arch.md)** | The **Laws**. The 10 non-negotiable mandates that define the standard. | Developers, AI Agents |
-| **[Structure Guide](spec/structure.md)** | The **Map**. Defines the vertical slice file structure. | Developers |
-| **[Patterns Library](spec/patterns/)** | The **Blueprints**. Idiomatic Python implementations of the mandates. | Everyone |
-| **[Agentic Systems](spec/agentic.md)** | The **Translation**. Maps "Agent" buzzwords to standard architectural patterns. | AI Engineers |
+Software systems fail not from incorrect algorithms but from **scattered truth**. The rules governing a business entity become distributed across services, validators, and utilities. Understanding what an "Order" truly is requires archaeology across dozens of files.
+
+EMDCA fixes this structurally:
+
+- **Co-locate logic with data.** The type answers the question, not an external service.
+- **Make invalid states unrepresentable.** Validation happens once, at construction.
+- **Separate decisions from side effects.** The Pure Core decides; the Impure Shell executes.
 
 ---
 
-## ⚖️ The 10 Mandates (Cheat Sheet)
+## ⚖️ The 10 Mandates
 
 1.  **Construction:** Use Value Objects & Pure Factories. Parse, don't validate. ([Pattern 01](spec/patterns/01-factory-construction.md))
 2.  **State:** Use Sum Types (Discriminated Unions). Make invalid states unrepresentable. ([Pattern 02](spec/patterns/02-state-sum-types.md))
@@ -38,12 +38,30 @@ EMDCA eliminates "conceptual fragmentation" by enforcing strict co-location of l
 
 ---
 
-## 🚀 Usage
+## 📚 Documentation
 
-This repository is a **Reference Standard**.
+| Document | What It Is |
+| :--- | :--- |
+| **[Manifesto](manifesto.md)** | The **Philosophy**. Why explicit modeling matters. |
+| **[Architecture Spec](spec/arch.md)** | The **Laws**. The 10 mandates in detail. |
+| **[Structure Guide](spec/structure.md)** | The **Map**. Vertical slice file organization. |
+| **[Patterns Library](spec/patterns/)** | The **Blueprints**. Idiomatic Python implementations. |
+| **[Agentic Systems](spec/agentic.md)** | The **Translation**. "Agent" buzzwords → real patterns. |
+| **[Reference Skeleton](spec/skeleton.md)** | The **Template**. A working starter structure. |
 
-*   **For Humans:** Read the Manifesto to align on philosophy. Use the Patterns as a style guide for your codebase.
-*   **For AI Agents:** Use `spec/arch.md` as a system prompt or context to ensure generated code adheres to strict correctness guarantees.
+---
+
+## 🚀 Getting Started
+
+**To Learn:** Read the [Manifesto](manifesto.md), then the [Architecture Spec](spec/arch.md).
+
+**To Reference:** Copy `spec/` into your project. Use the patterns as a style guide.
+
+**To Build:** Start from the [Reference Skeleton](spec/skeleton.md). Every file in `spec/src/` contains structural docstrings linking back to the mandates.
+
+**For AI Agents:** Include `spec/arch.md` as system context. The constraints become guardrails—hallucinations become compilation errors.
+
+---
 
 ## License
 
