@@ -120,7 +120,41 @@ def get_order_summary(order: Order) -> str:
             return f"Order cancelled because: {r}"
 ```
 
-## 5. Cognitive Checks
+---
+
+## 5. Alternative: The Smart Enum (For Simple States)
+When states do not carry unique data (i.e., the shape of the object doesn't change, only its classification), a **Smart Enum** is the preferred lightweight alternative to a full Sum Type.
+
+### ✅ Pattern: Behavioral Enums
+Enrich the Enum with properties to co-locate logic, rather than scattering `if` statements.
+
+```python
+from enum import Enum
+
+class PaymentStatus(str, Enum):
+    PENDING = "pending"
+    PAID = "paid"
+    FAILED = "failed"
+
+    @property
+    def is_terminal(self) -> bool:
+        """Returns True if the state allows no further transitions."""
+        return self in {PaymentStatus.PAID, PaymentStatus.FAILED}
+
+    @property
+    def can_retry(self) -> bool:
+        return self == PaymentStatus.FAILED
+
+# Usage
+def check_payment(status: PaymentStatus):
+    # Logic is on the type, not scattered in helper functions
+    if status.can_retry:
+        retry_payment()
+```
+
+---
+
+## 6. Cognitive Checks
 *   [ ] **No Optional Flags:** Did I remove `is_shipped`, `is_cancelled` booleans?
 *   [ ] **Specific Inputs:** Do my transition functions accept `Order` (generic) or `PendingOrder` (specific)? (Prefer specific).
 *   [ ] **Structural Proof:** Does `ShippedOrder` contain data that simply *cannot exist* in `PendingOrder`?

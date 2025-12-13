@@ -61,14 +61,17 @@ The Logic decides "What happens next?" based on the current state. It returns a 
 
 ### ✅ Pattern: The Step Function
 ```python
+# src/domain/onboarding/workflow.py (Specific Naming)
+from domain.onboarding.api import SignupRequest # Foreign Model
+
 def step_signup(
     state: SignupState, 
-    input_data: dict
+    input: SignupRequest
 ) -> tuple[SignupState, ActionIntent]:
     
     match state:
         case SignupPending(email=e):
-            if input_data.get("verified"):
+            if input.is_verified:
                 # Transition: Pending -> Verified
                 new_state = SignupVerified(user_id="123")
                 # Side Effect: Send Welcome Email
@@ -84,6 +87,25 @@ def step_signup(
         case SignupCompleted():
             # Terminal State
             return state, HaltIntent()
+```
+
+### ✅ Pattern: Probabilistic Transitions (AI Agents)
+An "AI Agent" is simply a State Machine where the transition logic uses probabilistic inference instead of deterministic rules.
+
+```python
+def step_agent(state: AgentState, input: UserMessage) -> tuple[AgentState, ActionIntent]:
+    # The Logic is still Pure: It returns an Intent to ASK the LLM
+    match state:
+        case Thinking():
+            # Intent: "Ask the LLM what to do next"
+            return state, InferNextStepIntent(history=state.history)
+            
+        case Deciding(llm_response=response):
+            # Deterministic Routing based on Probabilistic Output
+            if response.tool_call == "calculator":
+                return Calculating(), CallToolIntent(...)
+            else:
+                return Responding(), SendMessageIntent(...)
 ```
 
 ---

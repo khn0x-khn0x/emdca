@@ -25,7 +25,7 @@ def calculate_tax(order_data: dict):
 ## 2. The Foreign Model (Reality)
 We model the external system's reality explicitly. This is not a "dumb DTO"; it is a precise definition of the foreign schema. We use Pydantic's aliasing to handle the friction declaratively.
 
-### ✅ Pattern: Declarative Mapping
+### ✅ Pattern: Declarative Mapping (REST API)
 ```python
 from pydantic import BaseModel, Field
 
@@ -43,6 +43,24 @@ class CoinbaseCandle(BaseModel):
     volume: float = Field(alias="v")
 ```
 
+### ✅ Pattern: Declarative Mapping (Chaotic LLM API)
+The LLM is just another foreign system with a specific schema. We model its output as a Foreign Model that translates to our Domain Decision.
+
+```python
+from typing import Literal
+
+# Foreign Reality (The LLM's Schema)
+class GptSentimentResponse(BaseModel):
+    # The LLM might return weird keys or structures
+    sentiment_label: str = Field(alias="label") 
+    confidence_score: float = Field(alias="probability")
+
+    def to_domain(self) -> 'SentimentDecision':
+        # Normalize the foreign labels
+        kind = "positive" if "pos" in self.sentiment_label.lower() else "negative"
+        return SentimentDecision(kind=kind, score=self.confidence_score)
+```
+
 ---
 
 ## 3. Declarative Translation (Self-Naturalization)
@@ -52,6 +70,11 @@ The Foreign Model knows how to naturalize itself into the Internal Truth. The tr
 ```python
 from datetime import datetime, timezone
 from domain.market.model import Candle, Price, Volume
+
+# Internal Truth
+class SentimentDecision(BaseModel):
+    kind: Literal["positive", "negative"]
+    score: float
 
 class CoinbaseCandle(BaseModel):
     # ... fields ...
@@ -70,46 +93,21 @@ class CoinbaseCandle(BaseModel):
 
 ---
 
-## 💡 Spotlight: The LLM as a Foreign Reality
-The LLM is just another foreign system with a specific schema. We model its output as a Foreign Model that translates to our Domain Decision.
-
-```python
-from typing import Literal
-from pydantic import BaseModel
-
-# Internal Truth
-class SentimentDecision(BaseModel):
-    kind: Literal["positive", "negative"]
-    score: float
-
-# Foreign Reality (The LLM's Schema)
-class GptSentimentResponse(BaseModel):
-    # The LLM might return weird keys or structures
-    sentiment_label: str = Field(alias="label") 
-    confidence_score: float = Field(alias="probability")
-
-    def to_domain(self) -> SentimentDecision:
-        # Normalize the foreign labels
-        kind = "positive" if "pos" in self.sentiment_label.lower() else "negative"
-        return SentimentDecision(kind=kind, score=self.confidence_score)
-```
-
----
-
 ## 4. The Border (Where Translation Happens)
 The Shell receives the data, validates it against the Foreign Model (Reality check), and then immediately converts it to Domain (Truth).
 
 ### ✅ Pattern: Validate then Naturalize
 ```python
-# api/routes.py (The Border)
+# api/market.py (The Border)
+from domain.market.api import CandleRequest # Foreign Model (Contract)
 
 @router.post("/candles")
-def ingest_candles(payload: list[dict]):
+def ingest_candles(payload: list[CandleRequest]):
     # 1. Reality Check (Validate against Foreign Schema)
-    foreign_candles = [CoinbaseCandle.model_validate(p) for p in payload]
+    # FastAPI does this automatically with the type hint!
     
     # 2. Naturalize (Convert to Truth)
-    domain_candles = [fc.to_domain() for fc in foreign_candles]
+    domain_candles = [fc.to_domain() for fc in payload]
     
     # 3. Pass Truth to Logic
     market_strategy.analyze(domain_candles)

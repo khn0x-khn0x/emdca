@@ -4,7 +4,7 @@
 Infrastructure is a capability to be modeled as Data, not a Service to be executed. The Domain defines the *Topology* and *Intent* of the infrastructure as pure values, while the Shell handles the *Runtime Connection*.
 
 ## The Mechanism
-The Domain defines **Infrastructure Models** describing the shape of resources (e.g., Streams, Buckets) and **Generic Intents** describing desired actions (e.g., Publish, Store). The Shell provides **Executor Adapters** that hold the actual client connections and blindly execute the Intents.
+The Domain defines **Infrastructure Models** describing the shape of resources (e.g., Streams, Buckets, Agents) and **Generic Intents** describing desired actions (e.g., Publish, Store, Infer). The Shell provides **Executor Adapters** that hold the actual client connections and blindly execute the Intents.
 
 ---
 
@@ -28,9 +28,9 @@ class StorageService:
 ---
 
 ## 2. Infrastructure as Data (Topology)
-We describe *what* the infrastructure looks like using Pydantic models. This allows us to reason about the topology (e.g., validating retention policies) without connecting to it.
+We describe *what* the infrastructure looks like using Pydantic models. This allows us to reason about the topology (e.g., validating retention policies or agent definitions) without connecting to it.
 
-### ✅ Pattern: Pure Configuration
+### ✅ Pattern: Pure Configuration (Streams)
 ```python
 from typing import Literal
 from pydantic import BaseModel, Field
@@ -52,27 +52,24 @@ def validate_topology(config: NatsStreamConfig) -> bool:
     return True
 ```
 
----
-
-## 💡 Spotlight: AI Agents as Infrastructure
-An "AI Agent" is often just a configuration of a Model + Tools. We model this as static data.
+### ✅ Pattern: Pure Configuration (Agents)
+An "AI Agent" is often just a configuration of a Model + Tools. We model this as static data, just like a database table definition.
 
 ```python
-class AgentConfig(BaseModel):
+class AgentTopology(BaseModel):
     model_config = {"frozen": True}
     
+    role_name: str = "customer_support"
     model_name: str = "gpt-4"
     temperature: float = 0.1
-    allowed_tools: list[str] = ["calculator", "search"]
+    allowed_tools: list[str] = ["calculator", "knowledge_base"]
     max_steps: int = 5
 ```
-
-By modeling this as data, we can validate our "Agent Swarm" topology (e.g., "Ensure the Router uses a fast model") before we ever connect to a provider.
 
 ---
 
 ## 3. The Executor Adapter (The Shell)
-The Adapter is the only place where the library (e.g., `nats-py`, `boto3`) is imported. It accepts the Data Definition and performs the side effect.
+The Adapter is the only place where the library (e.g., `nats-py`, `boto3`, `langchain`) is imported. It accepts the Data Definition and performs the side effect.
 
 ### ✅ Pattern: The Dumb Adapter
 ```python

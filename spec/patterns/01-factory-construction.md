@@ -8,8 +8,8 @@ All data enters the domain through **Pure Factory Functions**. These functions a
 
 ---
 
-## 1. Value Objects: Parsing Primitives
-Before constructing entities, we must parse primitives into **Value Objects** that carry structural proofs of validity.
+## 1. The Foundation: Value Objects
+Before constructing entities, we must parse primitives into **Value Objects** that carry structural proofs of validity. Primitive Obsession (passing raw strings) is forbidden.
 
 ### ❌ Anti-Pattern: Primitive Obsession with Runtime Checks
 ```python

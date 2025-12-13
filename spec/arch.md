@@ -11,6 +11,7 @@ This document contains the non-negotiable engineering standards for the system. 
 #### **MUST USE:**
 
 * **Pure Factories:** All domain logic and decision-making must live exclusively in **Pure Factory Functions**. These functions accept raw, unstructured data and "parse" it into a valid Domain Type.  
+* **Value Objects:** Primitive Obsession is forbidden. Use **Value Objects** (Rich Types) to wrap all primitives (e.g., `EmailAddress` instead of `str`).
 * **Parse, Don't Validate:** Instead of checking if data.is\_valid, try to construct the success type. If the data is invalid, the factory must return a distinct Failure Type.  
 * **Total Functions:** The factory must handle **every** possible input state and return a valid result object (Success or Failure). It must never crash or raise unhandled exceptions on expected domain data.
 
@@ -30,6 +31,7 @@ This document contains the non-negotiable engineering standards for the system. 
 
 * **Discriminated Unions (Sum Types):** Mutually exclusive realities must be modeled as Unions of distinct Types (e.g., EvaluationResult \= EnterContext | WaitContext).  
 * **Structural Proofs:** Each Context type must contain the specific data required for that reality (e.g., EnterContext must contain an EntryProposal).  
+* **Behavioral Enums:** Simple state machines should be modeled as **Behavioral Enums** (Smart Enums) where the logic lives on the Enum member itself.
 * **Pattern Matching:** Use structural pattern matching (e.g., match/case) to handle the different realities returned by the factory.
 
 #### **MUST NOT USE:**
