@@ -12,6 +12,7 @@ This document contains the non-negotiable engineering standards for the system. 
 
 * **Pure Factories:** All domain logic and decision-making must live exclusively in **Pure Factory Functions**. These functions accept raw, unstructured data and "parse" it into a valid Domain Type.  
 * **Value Objects:** Primitive Obsession is forbidden. Use **Value Objects** (Rich Types) to wrap all primitives (e.g., `EmailAddress` instead of `str`).
+* **Explicit Construction:** Never use default values in Domain Models (e.g., `status: str = 'pending'`). Defaults are hidden business rules. The Factory must set every field explicitly.
 * **Parse, Don't Validate:** Instead of checking if data.is\_valid, try to construct the success type. If the data is invalid, the factory must return a distinct Failure Type.  
 * **Total Functions:** The factory must handle **every** possible input state and return a valid result object (Success or Failure). It must never crash or raise unhandled exceptions on expected domain data.
 
@@ -63,13 +64,22 @@ This document contains the non-negotiable engineering standards for the system. 
 
 #### **MUST USE:**
 
-* **Command Objects (Intents):** The domain model must return inert, serializable **Data Structures** describing the side effect (e.g., EnterIntent).  
-* **Complete Instructions:** The Intent must contain **all** parameters required for execution. The Shell should never need to query the Context or calculate anything to execute the Intent.
+* **Command Objects (Intents):** The domain model must return inert, serializable **Specification Objects** describing the side effect AND its outcome interpretation.
+* **Complete Instructions:** The Intent must contain:
+    1. **Execution Parameters:** All data required to perform the operation.
+    2. **Success Mapping:** How to transform **primitives extracted from** the raw infrastructure result into a Domain Success type.
+    3. **Failure Mapping:** How to transform the error string into a Domain Failure type.
+    4. **Exception Classification:** Which infrastructure exceptions represent expected failures (return Failure type) vs. system panics (propagate).
+
+Note: The `on_success` method receives **primitives** (strings, ints, bools), never foreign objects. The Shell extracts values from infrastructure responses before calling Intent methods. This keeps the Domain completely decoupled from infrastructure response shapes.
+* **Generic Execution:** The Shell should be able to execute ANY Intent using a single generic executor function. If adding a new Intent requires new code in the Shell beyond wiring, the Intent is incomplete.
 
 #### **MUST NOT USE:**
 
 * **Service Injection:** Never inject a "Service" or "Client" into a domain model. Models must never call methods like .execute() or .save().  
 * **Closures/Callbacks:** Intents must be pure data (JSON serializable), not functions or code blocks.
+* **Per-Operation Exception Handling:** The Shell must not contain operation-specific try/except blocks that construct domain Result types. Exception-to-Result mapping belongs in the Intent specification.
+* **Result Construction in Shell:** The Shell must not directly instantiate Success or Failure types. It calls the Intent's mapping methods.
 
 ---
 
@@ -90,19 +100,19 @@ This document contains the non-negotiable engineering standards for the system. 
 
 ---
 
-### **VI. The Abstraction Mandate: The Repository Pattern**
+### **VI. The Abstraction Mandate: Storage as Foreign Reality**
 
-**The Principle:** The Domain Core must be agnostic to the mechanism of data storage. Whether data lives in a database, a file, or memory is an implementation detail that must not leak into business logic.
+**The Principle:** The Domain Core must be agnostic to the mechanism of data storage. The Database is just another **Foreign Reality** (External System) that must be explicitly modeled and translated.
 
 #### **MUST USE:**
 
-* **Storage Interfaces:** The Domain must define *what* data it needs (e.g., `get_session()`) via an interface or abstract contract, but never *how* to get it.
-* **The Repository Implementation:** A concrete class in the Shell that implements the interface, handling the specific SQL queries, file I/O, or cache lookups.
+*   **Foreign Models for Storage:** Define Pydantic models (e.g., `DbOrder`) that represent the exact shape of the database table.
+*   **Shell Execution:** The Shell (Service Layer) executes the I/O (SQL queries), validates the result into the Foreign Model, and translates it to the Domain Object (`.to_domain()`).
 
 #### **MUST NOT USE:**
 
-* **Direct I/O in Domain:** Never write SQL, file paths, or specific database import statements inside a Domain Model or Factory.
-* **Leaky Abstractions:** Do not return database-specific cursors or ORM objects (like SQLAlchemy Row Proxies) into the Domain. The Repository must return pure Domain Objects.
+*   **Direct I/O in Domain:** Never write SQL, file paths, or specific database import statements inside a Domain Model or Factory.
+*   **Leaky Abstractions:** Do not return database-specific cursors or ORM objects (like SQLAlchemy Row Proxies) into the Domain. The Shell must naturalize the data immediately.
 
 ---
 
@@ -169,7 +179,7 @@ This document contains the non-negotiable engineering standards for the system. 
 
 * **Infrastructure Models:** Define the "Shape" of the infrastructure using pure Domain Models (e.g., `NatsStream`, `S3BucketConfig`). These models describe *what* the infrastructure looks like, not *how* to connect to it.
 * **Topology as Config:** The generic constraints of the infrastructure (retention policies, subject hierarchies, queue names) must be defined in the Domain, allowing the logic to reason about the topology.
-* **Executor Adapters:** Create "dumb" adapters in the Shell that hold the actual client libraries (e.g., `nats-py`, `boto3`). These adapters receive Intents from the Domain and blindly execute the side effect.
+* **Shell Execution:** The Shell (Service Layer) receives Intents from the Domain and executes them using client libraries (e.g., `nats-py`, `boto3`). No "Adapter Class" wrapper is required if the client is simple.
 
 #### **MUST NOT USE:**
 

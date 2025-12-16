@@ -1,10 +1,12 @@
 # Pattern 10: Infrastructure (Capability as Data)
 
 ## The Principle
-Infrastructure is a capability to be modeled as Data, not a Service to be executed. The Domain defines the *Topology* and *Intent* of the infrastructure as pure values, while the Shell handles the *Runtime Connection*.
+Infrastructure is a capability to be modeled as **Data**, not a Service to be executed. The Domain defines the *Topology* (Config) and *Intent* (Action) as pure values. The Shell simply "plays back" these values against the real world.
 
 ## The Mechanism
-The Domain defines **Infrastructure Models** describing the shape of resources (e.g., Streams, Buckets, Agents) and **Generic Intents** describing desired actions (e.g., Publish, Store, Infer). The Shell provides **Executor Adapters** that hold the actual client connections and blindly execute the Intents.
+1.  **Topology Models:** The Domain defines what infrastructure should exist (e.g., `NatsStreamConfig`).
+2.  **Intent Models:** The Domain returns Intents describing side effects (e.g., `EnsureStreamIntent`).
+3.  **Shell Execution:** The Service Layer holds the client connection and blindly executes the Intents using the generic executor.
 
 ---
 
@@ -19,21 +21,18 @@ class StorageService:
     def __init__(self):
         # ❌ Side Effect: Connects to AWS on init
         self.s3 = boto3.client("s3")
-    
-    def store(self, key: str, data: bytes):
-        # ❌ Logic is coupled to network
-        self.s3.put_object(Bucket="my-bucket", Key=key, Body=data)
 ```
 
 ---
 
 ## 2. Infrastructure as Data (Topology)
-We describe *what* the infrastructure looks like using Pydantic models. This allows us to reason about the topology (e.g., validating retention policies or agent definitions) without connecting to it.
+We describe *what* the infrastructure looks like using Pydantic models. This allows us to reason about the topology (e.g., validating retention policies) without connecting to it.
 
 ### ✅ Pattern: Pure Configuration (Streams)
 ```python
+# domain/system/topology.py
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 class NatsStreamConfig(BaseModel):
     model_config = {"frozen": True}
@@ -41,20 +40,10 @@ class NatsStreamConfig(BaseModel):
     name: str
     subjects: list[str]
     retention: Literal["limits", "interest", "workqueue"]
-    max_msgs: int
-    max_bytes: int
-
-# Pure Logic: We can validate our topology
-def validate_topology(config: NatsStreamConfig) -> bool:
-    if config.retention == "workqueue" and len(config.subjects) > 1:
-        # Business Rule: Workqueues should have single subjects
-        return False
-    return True
 ```
 
 ### ✅ Pattern: Pure Configuration (Agents)
-An "AI Agent" is often just a configuration of a Model + Tools. We model this as static data, just like a database table definition.
-
+An "AI Agent" is just a configuration of a Model + Tools.
 ```python
 class AgentTopology(BaseModel):
     model_config = {"frozen": True}
@@ -62,67 +51,137 @@ class AgentTopology(BaseModel):
     role_name: str = "customer_support"
     model_name: str = "gpt-4"
     temperature: float = 0.1
-    allowed_tools: list[str] = ["calculator", "knowledge_base"]
-    max_steps: int = 5
 ```
 
 ---
 
-## 3. The Executor Adapter (The Shell)
-The Adapter is the only place where the library (e.g., `nats-py`, `boto3`, `langchain`) is imported. It accepts the Data Definition and performs the side effect.
+## 3. The Specification (Intent)
+Infrastructure setup is a side effect. It succeeds or fails. The Domain must own the interpretation of those outcomes using an Intent Contract (Pattern 04).
 
-### ✅ Pattern: The Dumb Adapter
+### ✅ Pattern: The Setup Intent
 ```python
-# service/nats_adapter.py (Shell)
-import nats
+# domain/infra/topology.py
+from typing import Any, Literal
 
-class NatsAdapter:
-    def __init__(self, nc: nats.NATS):
-        self.nc = nc
+class EnsureStreamIntent(BaseModel):
+    model_config = {"frozen": True}
+    
+    config: NatsStreamConfig
+    catch_exceptions: tuple[str, ...] = ("TimeoutError", "ConnectionClosedError")
+    
+    def on_success(self) -> "StreamReady":
+        """No return value needed from add_stream — success is implicit."""
+        return StreamReady(stream_name=self.config.name)
+    
+    def on_failure(self, error: str) -> "StreamSetupFailed":
+        return StreamSetupFailed(stream_name=self.config.name, error=error)
 
-    async def ensure_stream(self, config: NatsStreamConfig):
-        # 1. Translate Domain Config -> Library Call
-        js = self.nc.jetstream()
-        
-        await js.add_stream(
-            name=config.name,
-            subjects=config.subjects,
-            retention=config.retention, # Maps 1:1
-            max_msgs=config.max_msgs,
-            max_bytes=config.max_bytes
-        )
+class StreamReady(BaseModel):
+    kind: Literal["ready"] = "ready"
+    stream_name: str
 
-    async def publish(self, intent: PublishIntent):
-        # 2. Execute Intent (Pattern 04)
-        await self.nc.publish(intent.subject, intent.payload)
+class StreamSetupFailed(BaseModel):
+    kind: Literal["failed"] = "failed"
+    stream_name: str
+    error: str
+
+type EnsureStreamResult = StreamReady | StreamSetupFailed
+
+class ConnectIntent(BaseModel):
+    model_config = {"frozen": True}
+    
+    url: str
+    timeout_seconds: float = 5.0
+    catch_exceptions: tuple[str, ...] = ("NoServersError", "TimeoutError", "OSError")
+    
+    def on_success(self, client_id: str) -> "Connected":
+        """Receives extracted primitive, not raw client object."""
+        return Connected(url=self.url, client_id=client_id)
+    
+    def on_failure(self, error: str) -> "ConnectionFailed":
+        return ConnectionFailed(url=self.url, error=error)
+
+class Connected(BaseModel):
+    kind: Literal["connected"] = "connected"
+    url: str
+    client_id: str
+
+class ConnectionFailed(BaseModel):
+    kind: Literal["connection_failed"] = "connection_failed"
+    url: str
+    error: str
+
+type ConnectResult = Connected | ConnectionFailed
 ```
 
 ---
 
-## 4. Usage in Orchestrator
-The Orchestrator loads the config (Data) and passes it to the Adapter (Executor).
+## 4. Usage in Startup (Composition Root)
+Even `main.py` is an Orchestrator. It loads the config, defines the Intent, and executes it using the generic executor. It does **not** call library methods directly.
 
 ```python
+# main.py
 async def startup(config: AppConfig):
-    # 1. Define Topology (Data)
-    stream_conf = NatsStreamConfig(
-        name="orders", 
-        subjects=["orders.*"],
-        retention="limits",
-        max_msgs=10000,
-        max_bytes=1024*1024
+    # 1. Connect (Intent-Based)
+    connect_intent = ConnectIntent(url=config.nats_url)
+    
+    # Shell retains raw client; Domain gets clean result
+    nc = None
+    
+    async def do_connect():
+        nonlocal nc
+        nc = await nats.connect(connect_intent.url)
+        return nc
+    
+    conn_result = await execute(
+        operation=do_connect,
+        catch_names=connect_intent.catch_exceptions,
+        # Shell extracts client_id from raw nats client
+        on_success=lambda nc: connect_intent.on_success(client_id=str(nc.client_id)),
+        on_failure=connect_intent.on_failure,
     )
 
-    # 2. Initialize Adapter
-    nc = await nats.connect(config.nats_url)
-    adapter = NatsAdapter(nc)
+    match conn_result:
+        case ConnectionFailed(error=e):
+            sys.exit(f"Failed to connect: {e}")
+        case Connected():
+            pass  # nc is now set
+            
+    js = nc.jetstream()
 
-    # 3. Apply Topology
-    # The adapter makes the real world match the data model
-    await adapter.ensure_stream(stream_conf)
+    # 2. Define Intent (Pure Data)
+    intent = EnsureStreamIntent(
+        config=NatsStreamConfig(
+            name="orders", 
+            subjects=["orders.*"],
+            retention="limits"
+        )
+    )
+
+    # 3. Execute (Generic Shell)
+    # The Shell reads the contract and applies it.
+    result = await execute(
+        operation=lambda: js.add_stream(
+            name=intent.config.name,
+            subjects=intent.config.subjects,
+            retention=intent.config.retention,
+        ),
+        catch_names=intent.catch_exceptions,
+        on_success=lambda _: intent.on_success(),  # No extraction needed
+        on_failure=intent.on_failure,
+    )
+
+    # 4. Handle Outcome
+    match result:
+        case StreamReady():
+            pass  # Continue startup
+        case StreamSetupFailed(error=e):
+            sys.exit(f"Infrastructure setup failed: {e}")
 ```
 
 ## 5. Cognitive Checks
-*   [ ] **No Libraries:** Did I remove `import boto3`, `import redis` from the `domain/` folder?
-*   [ ] **Config vs Client:** Do I pass `StreamConfig` (Data) to logic, never `StreamClient` (Object)?
-*   [ ] **Validation:** Can I check if my bucket name is valid without internet access?
+*   [ ] **No Libraries:** Did I remove `import boto3` from the `domain/` folder?
+*   [ ] **Intent-Based Setup:** Do I use `EnsureStreamIntent` instead of calling `ensure_topology()` directly?
+*   [ ] **Intent-Based Connection:** Does initial connection use `ConnectIntent`, not a direct call?
+*   [ ] **Outcome Ownership:** Does the Domain define what `StreamSetupFailed` looks like?
+*   [ ] **Generic Execution:** Could I switch the executor implementation without changing the Intent?

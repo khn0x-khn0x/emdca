@@ -98,7 +98,37 @@ def create_user(data: dict) -> CreateUserResult:
         return UserRejected(reason=str(e))
 ```
 
-## 3. Cognitive Checks
+## 3. Explicit Construction (No Defaults)
+Domain Models must describe the *Shape* of data, not the *Rules* of data. Default values are hidden business rules.
+
+### ❌ Anti-Pattern: Implicit Defaults
+```python
+class Order(BaseModel):
+    # ❌ The rule "New orders are pending" is buried in the schema.
+    # If we change the rule, we have to change the Type definition.
+    status: str = "pending"
+    created_at: datetime = Field(default_factory=datetime.now)
+```
+
+### ✅ Pattern: Explicit Factory
+The Schema is dumb. The Factory is smart.
+
+```python
+class Order(BaseModel):
+    # Pure Shape. No defaults.
+    status: OrderStatus
+    created_at: datetime
+
+def create_order(user: User) -> Order:
+    # ✅ The rule lives in the Logic, where it belongs.
+    return Order(
+        status=OrderStatus.PENDING,
+        created_at=clock.now()
+    )
+```
+
+## 4. Cognitive Checks
+*   [ ] **No Defaults:** Did I remove all `= "default"` assignments in my Domain Models?
 *   [ ] **No Side Effects:** Does this factory just return data? (It should not save to DB).
 *   [ ] **Total Function:** Does it handle *all* inputs (including malformed ones) without crashing?
 *   [ ] **Immutable Output:** Is `model_config = {"frozen": True}` set on the output models?

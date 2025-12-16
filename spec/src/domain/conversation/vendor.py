@@ -1,5 +1,5 @@
 """
-THE FOREIGN REALITY (Vendor Schema / Adapter Model)
+THE FOREIGN REALITY (Vendor Schema)
 
 Role: Defines the schema of external systems (e.g. OpenAI Response, Stripe Object).
 Mandate: Mandate VII (Translation) & X (Infra as Data).

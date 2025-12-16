@@ -1,5 +1,5 @@
 """
-THE INTERFACE ADAPTER (Router)
+THE ROUTER (Interface)
 
 Role: The HTTP Entrypoint for a specific Context.
 Mandate: Mandate VII (Translation).

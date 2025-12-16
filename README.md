@@ -30,7 +30,7 @@ EMDCA fixes this structurally:
 3.  **Control Flow:** Use Railway Oriented Programming. No Exceptions for logic. ([Pattern 03](spec/patterns/03-railway-control-flow.md))
 4.  **Execution:** Return Intents as Data. The Core decides; the Shell executes. ([Pattern 04](spec/patterns/04-execution-intent.md))
 5.  **Configuration:** Treat EnvVars as Foreign Reality. Translate to pure AppConfig. ([Pattern 05](spec/patterns/05-config-injection.md))
-6.  **Abstraction:** Define Storage Protocols. The Domain never performs direct I/O. ([Pattern 06](spec/patterns/06-repository-abstraction.md))
+6.  **Storage:** Treat DB as Foreign Reality. Translate to pure Domain Objects. ([Pattern 06](spec/patterns/06-repository-abstraction.md))
 7.  **Translation:** Use Foreign Models. Declarative mapping of External Reality to Internal Truth. ([Pattern 07](spec/patterns/07-acl-translation.md))
 8.  **Coordination:** Use a Dumb Orchestrator. The loop only moves data; it never thinks. ([Pattern 08](spec/patterns/08-orchestrator-loop.md))
 9.  **Workflow:** Model Process as a State Machine. The Domain drives the next step. ([Pattern 09](spec/patterns/09-workflow-state-machine.md))

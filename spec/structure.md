@@ -16,15 +16,20 @@ src/
 │   │   ├── entity.py        # Internal Truth (Domain Models)
 │   │   ├── api.py           # Foreign Reality (Our HTTP API Schema)
 │   │   ├── vendor.py        # Foreign Reality (External Vendor Schema)
+│   │   ├── store.py         # Foreign Reality (Database Schema)
 │   │   └── process.py       # Pure Logic (Factories / State Machines)
 │   │
-│   └── system/              # Context: System Capabilities
-│       ├── config.py        # Internal Truth (AppConfig)
-│       └── env.py           # Foreign Reality (EnvVars)
+│   ├── system/              # Context: System Capabilities
+│   │   ├── config.py        # Internal Truth (AppConfig)
+│   │   └── env.py           # Foreign Reality (EnvVars)
+│   │
+│   └── infra/               # Context: Infrastructure Intents
+│       ├── nats.py          # Intents: ConnectIntent, PublishIntent
+│       └── redis.py         # Intents: GetIntent, SetIntent
 │
-├── service/                 # THE ORCHESTRATOR (Impure, Horizontal)
-│   ├── context_1_svc.py     # Procedural Loops / Consumers
-│   └── app_svc.py           # Composition Root Helpers
+├── service/                 # THE SHELL (Orchestration & Execution)
+│   ├── context_1.py         # Procedural Loops / Consumers
+│   └── app.py               # Composition Root Helpers
 │
 └── api/                     # THE INTERFACE (Impure, Horizontal)
     ├── app.py               # The App Definition (Builds FastAPI instance)
@@ -41,35 +46,41 @@ Imports must strictly flow **inward** toward the Domain.
 *   ✅ `service/` imports `domain/`
 *   ✅ `api/` imports `service/` and `domain/`
 *   ❌ `domain/` **NEVER** imports `service/` or `api/`
-*   ❌ Contexts (e.g., `context_1/`) should minimize imports from other contexts (use ID references).
+
+### The Composition Rule (Cross-Domain Imports)
+Contexts are not islands. They share a "Ubiquitous Language."
+
+*   ✅ **Allowed:** Contexts may import **Domain Models** (Entities, Value Objects) from other contexts. (e.g., `Trade` imports `User` from `Identity`). This is "Using the Real Thing."
+*   ❌ **Forbidden:** Contexts must never import **Services** or **APIs** from other contexts.
+*   **Guideline:** If `Trade` needs to know if a `User` is active, pass the `User` object, not just a `user_id`.
 
 ---
 
 ## 📂 `src/domain/` (The Core)
 
-This directory is grouped by **Context** (Business Area). Each folder represents a bounded context.
+This directory is grouped by **Context** (Business Area).
 
 **Allowed File Types per Context:**
 
 1.  **Internal Truth (`entity.py`, `user.py`, `order.py`):**
     *   Pure Pydantic models.
     *   Defines the language of the business.
-    *   No external dependencies.
+    *   **Banned Names:** `model.py` (Too generic. Name the file after the concept).
 
 2.  **Atoms (`types.py`, `values.py`):**
     *   Context-specific Value Objects (`OrderId`) and Enums (`OrderStatus`).
-    *   Separates the building blocks from the aggregates.
 
-3.  **Foreign Reality (`api.py`, `vendor.py`):**
+3.  **Foreign Reality (`api.py`, `vendor.py`, `store.py`):**
     *   **`api.py`:** The schema of our own API (Request/Response models).
     *   **`vendor.py`:** The schema of external APIs we consume.
+    *   **`store.py`:** The schema of our Database Tables (e.g., `DbOrder`).
     *   This is where "Adapters" live. Knowing the shape of data is Domain Knowledge.
 
 4.  **Pure Logic (`process.py`, `calculation.py`, `workflow.py`):**
     *   Pure functions.
     *   Input: `ForeignModel` or `DomainModel`.
     *   Output: `Result`, `Intent`, or `NewState`.
-    *   **Rule:** Avoid generic names like `logic.py` or `utils.py`. Name the file after the *Concept* (e.g., `pricing.py`) or the *Process* (e.g., `onboarding.py`).
+    *   **Banned Names:** `logic.py`, `utils.py`, `helpers.py`. (Name the file after the Process).
 
 ---
 
@@ -79,26 +90,19 @@ This is a special Context that contains universal primitives used across multipl
 
 *   **`primitives.py`:** Value Objects like `Money`, `Email`, `Currency`.
 *   **`ids.py`:** Base classes for strongly-typed IDs.
-*   **Constraint:** strictly pure types. No side effects. No logic depending on external systems.
+*   **Constraint:** strictly pure types. No side effects.
 
 ---
 
-## 📂 `src/domain/system/` (The Foundation)
+## 📂 `src/service/` (The Shell)
 
-We treat the System itself (Startup, Config, Environment) as just another Domain Context.
-
-*   **`env.py` (Foreign Reality):** Models the `os.environ` variables using Pydantic. Defines the chaotic input.
-*   **`config.py` (Internal Truth):** Defines the structured `AppConfig`.
-
----
-
-## 📂 `src/service/` (The Orchestrator)
-
-The Service Layer acts as the "Roadie." It connects the pipes.
+The Service Layer is the **Imperative Shell**. It handles Orchestration (Workflow) and Execution (I/O).
 
 *   **Responsibility:** Fetch Data -> Call Logic -> Save Data.
-*   **Contains:** Procedural loops, Transaction management, Event Consumers.
-*   **Philosophy:** Dumb code. No business rules.
+*   **Contains:**
+    *   **Orchestrators:** Procedural loops (`process_order_flow`).
+    *   **Execution:** Generic Executor for Intent fulfillment.
+*   **Philosophy:** Dumb code. No business rules. Just wiring and execution.
 
 ---
 
@@ -151,12 +155,13 @@ def main():
         sys.exit(1)
 
     # 3. Wiring (Infrastructure)
-    # Instantiate adapters using the clean Config
-    # db = PostgresClient(config.db_url)
+    # Use Intent-Based Setup (Pattern 10)
+    # nats_intent = ConnectIntent(url=config.nats_url)
+    # execute(nats_intent)
     
     # 4. Launch Interface
     # We pass the wired dependencies to the App Builder
-    app = create_api(config, db)
+    # app = create_api(config, db_client)
     
     # 5. Run Server
     uvicorn.run(app, host="0.0.0.0", port=8000)

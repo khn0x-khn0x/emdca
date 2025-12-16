@@ -115,15 +115,15 @@ The Service Layer becomes a generic engine that drives the state machine forward
 
 ### ✅ Pattern: The Recursive Loop
 ```python
-def run_workflow(repo: WorkflowRepo, workflow_id: str, input_data: dict):
-    # 1. Load Current State
-    state = repo.get(workflow_id)
+def run_workflow(db: Session, workflow_id: str, input_data: dict):
+    # 1. Load Current State (Shell Execution)
+    state = fetch_workflow_state(db, workflow_id)
 
     # 2. Compute Next Step (Pure)
     new_state, intent = step_signup(state, input_data)
 
-    # 3. Persist State
-    repo.save(new_state)
+    # 3. Persist State (Shell Execution)
+    save_workflow_state(db, new_state)
 
     # 4. Execute Side Effect
     match intent:

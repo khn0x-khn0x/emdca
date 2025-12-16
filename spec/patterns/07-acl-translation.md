@@ -91,6 +91,23 @@ class CoinbaseCandle(BaseModel):
         )
 ```
 
+### 💡 The Inverse: Intent Outcome Mapping
+
+The `.to_domain()` pattern handles **inbound** translation (Foreign → Internal).
+
+For **outbound** translation (Execution Result → Domain Result), the same principle applies but lives on the **Intent**:
+
+```python
+class PublishIntent(BaseModel):
+    # ... parameters ...
+    
+    def on_success(self, ack: NatsAck) -> EventPublished:
+        """Outbound translation: Foreign Result → Internal Truth"""
+        return EventPublished(sequence=ack.seq, stream=self.stream)
+```
+
+The Intent is the "Foreign Model" for the operation's outcome. It owns the translation.
+
 ---
 
 ## 4. The Border (Where Translation Happens)
@@ -116,4 +133,4 @@ def ingest_candles(payload: list[CandleRequest]):
 ## 5. Cognitive Checks
 *   [ ] **Co-location:** Does the Foreign Model live in the same Context as the Domain Model (e.g., `domain/trade/coinbase.py`)?
 *   [ ] **Declarative Mapping:** Do I use `Field(alias=...)` instead of manual assignment?
-*   [ ] **One-Way Street:** Does the Foreign Model depend on the Domain, but the Domain Core never imports the Foreign Model?
+*   [ ] **One-Way Dependency:** Does the Foreign Model import Internal Truth (for `.to_domain()`), but Internal Truth never imports the Foreign Model?

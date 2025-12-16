@@ -19,17 +19,21 @@ src/
 │   ├── deps.py              # Shared Dependencies
 │   └── conversation.py      # The Router (Interface Adapter)
 ├── service/
-│   └── conversation_svc.py  # The Orchestrator (Service Layer)
+│   └── conversation.py      # The Orchestrator (Service Layer)
 └── domain/
     ├── system/              # System Context
     │   ├── config.py        # Internal Truth (Config)
     │   └── env.py           # Foreign Reality (EnvVars)
     ├── shared/              # Shared Context
     │   └── primitives.py    # Ubiquitous Language (Value Objects)
+    ├── infra/               # Infrastructure Context
+    │   ├── nats.py          # Intents: ConnectIntent, PublishIntent
+    │   └── redis.py         # Intents: ConnectIntent, GetIntent
     └── conversation/        # Feature Context
         ├── entity.py        # Internal Truth (Domain Model)
         ├── api.py           # Foreign Reality (API Contract)
         ├── vendor.py        # Foreign Reality (Vendor Schema)
+        ├── store.py         # Foreign Reality (Database Schema)
         └── process.py       # Pure Logic (Factory / Workflow)
 ```
 

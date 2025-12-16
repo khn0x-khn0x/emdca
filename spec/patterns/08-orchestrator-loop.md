@@ -13,8 +13,8 @@ Putting business logic ("Thinking") inside the orchestration layer ("Moving") ma
 
 ### ❌ Anti-Pattern: Logic in the Loop
 ```python
-def process_payment(payment_id: str, repo: Repo):
-    payment = repo.get(payment_id)
+def process_payment(payment_id: str, db: Session):
+    payment = fetch_payment(db, payment_id)
     
     # ❌ BUSINESS LOGIC LEAK!
     # This rule belongs in the Domain, not the Service.
@@ -22,7 +22,7 @@ def process_payment(payment_id: str, repo: Repo):
         raise ValueError("Large payments need verification")
         
     payment.status = "processed"
-    repo.save(payment)
+    save_payment(db, payment)
 ```
 
 ---
@@ -32,9 +32,10 @@ The Orchestrator is a pipeline. It connects the components but does not modify t
 
 ### ✅ Pattern: Fetch -> Decide -> Act -> Persist
 ```python
-def process_payment(payment_id: str, repo: Repo):
-    # 1. Fetch (Infrastructure)
-    payment = repo.get(payment_id)
+def process_payment(payment_id: str, db: Session):
+    # 1. Fetch (Infrastructure / Shell)
+    # Uses Pattern 06 (Foreign Model Translation) internally
+    payment = fetch_payment(db, payment_id)
     if not payment:
         return
 
@@ -43,11 +44,11 @@ def process_payment(payment_id: str, repo: Repo):
     # It does NOT ask "Is this valid?"
     result_intent = decide_payment_action(payment)
 
-    # 3. Act (Infrastructure)
+    # 3. Act (Infrastructure / Shell)
     match result_intent:
         case ProcessPaymentIntent(new_state=s):
             gateway.charge(s.amount)
-            repo.save(s)
+            save_payment(db, s)
             
         case RequireVerificationIntent(reason=r):
             email_service.send_alert(r)
@@ -56,7 +57,7 @@ def process_payment(payment_id: str, repo: Repo):
         case RejectPaymentIntent(new_state=rejected_payment):
             # ✅ The Service just saves what it was given.
             # It does NOT call methods like .mark_rejected().
-            repo.save(rejected_payment)
+            save_payment(db, rejected_payment)
 ```
 
 ---
@@ -66,13 +67,13 @@ The Orchestrator is responsible for the **Unit of Work**. It ensures that the "A
 
 ### ✅ Pattern: Explicit Transactions
 ```python
-def safe_process(payment_id: str, repo: Repo, uow: UnitOfWork):
-    with uow.begin():
-        payment = repo.get(payment_id)
+def safe_process(payment_id: str, db: Session):
+    with db.begin():
+        payment = fetch_payment(db, payment_id)
         
         # ... logic ...
         
-        repo.save(payment)
+        save_payment(db, payment)
         # Commit happens here automatically
 ```
 
