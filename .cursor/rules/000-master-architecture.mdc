@@ -1,0 +1,43 @@
+---
+description: EMDCA architectural rules for AI-assisted development
+globs: ["**/*.py"]
+alwaysApply: true
+---
+
+## Building Blocks (Use These Types)
+- Smart Enums: `class Status(StrEnum)` with `@property` methods
+- Value Objects: `Annotated[str, AfterValidator(...)]`
+- Aggregates: Frozen Pydantic models with decision methods returning Intents
+- Commands: Inbound ADTs (what the caller wants)
+- Intents: Outbound ADTs (what should happen)
+- Events: Domain facts (what happened)
+- Results: `Success | Failure` discriminated unions
+- Ports: `typing.Protocol` for external dependencies
+
+## Implementation Order
+1. Smart enums and value objects
+2. Aggregates (pure decision logic)
+3. Commands / Intents / Events / Results
+4. Ports (protocols)
+5. Services (orchestration only)
+6. Adapters (thin I/O)
+
+## LLM Rules (When Generating Code)
+- Add new variants, never boolean flags
+- Dispatch on types via match/case, never `if kind == ...`
+- Domain functions are pure: no I/O, no await
+- All outcomes are discriminated unions, never exceptions
+- Intents contain ALL data needed for execution
+
+## Prohibited
+- `raise` for domain logic (use Result types)
+- `Optional` fields for mutually exclusive states (use Sum Types)
+- Business logic in services or adapters
+- `os.environ` access outside the composition root
+- Mutable domain models
+
+## Reference
+- Full spec: spec/arch.md
+- Patterns: spec/patterns/01-10
+- Examples: spec/src/
+- Agent translation: spec/agentic.md

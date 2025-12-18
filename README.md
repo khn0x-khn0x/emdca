@@ -38,6 +38,21 @@ EMDCA fixes this structurally:
 
 ---
 
+## 🛡️ Automated Enforcement: "The Architect's Mirror"
+
+EMDCA is not just a document; it is an active constraint system. This repository includes **The Architect's Mirror** (`.cursor/hooks/mirror.py`), a pure-Python AST analyzer that enforces the mandates in real-time.
+
+It acts as a "Synthetic Supervisor" for both Human Developers and AI Agents, instantly flagging:
+- **Structural Violations**: Using `raise` or `await` in the Domain.
+- **Architectural Drift**: Importing external libraries (`boto3`) into the Pure Core.
+- **Procedural Habits**: Writing `Manager` classes instead of Aggregates.
+
+The Mirror runs:
+1.  **Locally**: Inside Cursor via Hooks (`afterFileEdit`).
+2.  **Remotely**: In GitHub Actions (`.github/workflows/ci.yml`).
+
+---
+
 ## 📚 Documentation
 
 | Document | What It Is |
@@ -59,7 +74,7 @@ EMDCA fixes this structurally:
 
 **To Build:** Start from the [Reference Skeleton](spec/skeleton.md). Every file in `spec/src/` contains structural docstrings linking back to the mandates.
 
-**For AI Agents:** Include `spec/arch.md` as system context. The constraints become guardrails—hallucinations become compilation errors.
+**For AI Agents:** This repo is designed for you. The `.cursor/rules/` prime your context, and the Mirror hooks correct your output. The constraints act as guardrails—hallucinations become compilation errors.
 
 ---
 

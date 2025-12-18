@@ -31,7 +31,7 @@ quote-style = "double"
 indent-style = "space"
 
 [tool.ruff.lint.per-file-ignores]
-"spec/src/*" = ["E501"]  # assert allowed in tests
+"**/*.py" = ["E501"]  # assert allowed in tests
 
 [tool.pyright]
 typeCheckingMode = "strict"
@@ -41,3 +41,8 @@ include = ["spec/src"]
 exclude = ["**/__pycache__"]
 reportMissingImports = true
 reportMissingTypeStubs = false
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

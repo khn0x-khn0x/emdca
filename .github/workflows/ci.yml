@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "pyproject.toml"
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Format Check (Ruff)
+        run: uv run ruff format --check .
+
+      - name: Lint (Ruff)
+        run: uv run ruff check .
+
+      - name: Type Check (Pyright/Mypy)
+        # We rely on mypy for now as per local setup, though pyproject references pyright config
+        # We'll run mypy since we validated it locally.
+        run: uv run mypy .
+
+      - name: Run Tests (Pytest)
+        run: uv run pytest
+
+      - name: Enforce Architecture (The Mirror)
+        run: |
+          # Run mirror.py in batch mode
+          OUTPUT=$(uv run python3 .cursor/hooks/mirror.py)
+          echo "Mirror Output: $OUTPUT"
+          
+          # Check if output contains a followup_message (indication of violation)
+          if echo "$OUTPUT" | grep -q "followup_message"; then
+            echo "::error::Architectural Violations Found!"
+            # Extract the message for display (simple sed hack)
+            echo "$OUTPUT"
+            exit 1
+          fi
+          echo "Architecture Compliant."
+

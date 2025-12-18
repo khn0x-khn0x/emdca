@@ -1,0 +1,71 @@
+{
+  "settings": {
+    "target_globs": ["src/domain/**/*.py", "src/*/domain/**/*.py"],
+    "max_display": 10
+  },
+  "patterns": [
+    {
+      "id": "pattern_03_rop",
+      "name": "Control Flow Violation",
+      "kind": "node_usage",
+      "pattern": "Try",
+      "message": "Violation of Pattern 03 (Railway Control Flow). Domain Logic must use Result types (Success/Failure), not try/catch exceptions."
+    },
+    {
+      "id": "pattern_03_raise",
+      "name": "Exception Usage",
+      "kind": "node_usage",
+      "pattern": "Raise",
+      "message": "Violation of Pattern 03 (Railway Control Flow). Domain Logic must return Failure types, never raise Exceptions."
+    },
+    {
+      "id": "pattern_04_async",
+      "name": "Async in Domain",
+      "kind": "node_usage",
+      "pattern": "Await",
+      "message": "Violation of Pattern 04 (Pure Core). Domain Logic must be pure and synchronous. Async IO belongs in the Shell/Services."
+    },
+    {
+      "id": "pattern_02_flags",
+      "name": "Boolean State Flag",
+      "kind": "attribute_name",
+      "pattern": "^is_.*",
+      "message": "Violation of Pattern 02 (Sum Types). Do not use boolean flags for state. Use a Discriminated Union (Status Enum)."
+    },
+    {
+      "id": "pattern_04_service",
+      "name": "Implicit Service",
+      "kind": "class_name",
+      "pattern": ".*(Service|Manager|Handler|Processor)$",
+      "message": "Violation of Pattern 04 (Execution Intent). Domain should not have 'Services' or 'Managers'. Use Pure Factory Functions and Intent Objects."
+    },
+    {
+      "id": "pattern_10_infra",
+      "name": "External Dependency",
+      "kind": "restricted_import",
+      "pattern": "^(pydantic|domain)",
+      "message": "Violation of Pattern 10 (Infra as Data). Domain must not import external libraries (except Pydantic). Use Capability as Data (Config/Intents)."
+    },
+    {
+      "id": "pattern_01_validation",
+      "name": "Imperative State",
+      "kind": "function_name",
+      "pattern": "^(validate_|check_|verify_)",
+      "message": "Violation of Pattern 01 (Factory Construction). Do not write imperative validation methods. Write Factories that parse data into valid Types."
+    },
+    {
+      "id": "pattern_01_primitives",
+      "name": "Primitive Obsession",
+      "kind": "type_annotation",
+      "pattern": "^(str|int|bool|float)$",
+      "message": "Violation of Pattern 01 (Value Objects). Avoid primitives for domain concepts. Use Value Objects (e.g. EmailAddress, UserId) instead of raw types."
+    },
+    {
+      "id": "pattern_01_defaults",
+      "name": "Hidden Business Rules",
+      "kind": "attribute_default",
+      "pattern": ".*",
+      "message": "Violation of Pattern 01 (Explicit Construction). Avoid default values in Domain Models (except None/Field). Defaults hide business rules."
+    }
+  ]
+}
