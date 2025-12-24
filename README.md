@@ -1,6 +1,6 @@
 # EMDCA: Explicitly Modeled Data-Centric Architecture
 
-[![Architecture: EMDCA](https://img.shields.io/badge/Architecture-EMDCA-blueviolet)](spec/arch.md)
+[![Architecture: EMDCA](https://img.shields.io/badge/Architecture-EMDCA-blueviolet)](ref/arch.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python: 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![Code Style: Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
@@ -25,31 +25,128 @@ EMDCA fixes this structurally:
 
 ## ⚖️ The 10 Mandates
 
-1.  **Construction:** Use Value Objects & Pure Factories. Parse, don't validate. ([Pattern 01](spec/patterns/01-factory-construction.md))
-2.  **State:** Use Sum Types (Discriminated Unions). Make invalid states unrepresentable. ([Pattern 02](spec/patterns/02-state-sum-types.md))
-3.  **Control Flow:** Use Railway Oriented Programming. No Exceptions for logic. ([Pattern 03](spec/patterns/03-railway-control-flow.md))
-4.  **Execution:** Return Intents as Contracts. Complete specification of side effects and outcomes. ([Pattern 04](spec/patterns/04-execution-intent.md))
-5.  **Configuration:** Treat EnvVars as Foreign Reality. Translate to pure AppConfig. ([Pattern 05](spec/patterns/05-config-injection.md))
-6.  **Storage:** Treat DB as Foreign Reality. Translate to pure Domain Objects. ([Pattern 06](spec/patterns/06-repository-abstraction.md))
-7.  **Translation:** Use Foreign Models. Declarative mapping of External Reality to Internal Truth. ([Pattern 07](spec/patterns/07-acl-translation.md))
-8.  **Coordination:** Use a Dumb Orchestrator. The loop only moves data; it never thinks. ([Pattern 08](spec/patterns/08-orchestrator-loop.md))
-9.  **Workflow:** Model Process as a State Machine. The Domain drives the next step. ([Pattern 09](spec/patterns/09-workflow-state-machine.md))
-10. **Infrastructure:** Model Capability as Data. Topology is configuration, not code. ([Pattern 10](spec/patterns/10-infrastructure-capability-as-data.md))
+1.  **Construction:** Factory methods on frozen Pydantic models. Parse, don't validate.
+2.  **State:** Sum Types (Discriminated Unions). Make invalid states unrepresentable.
+3.  **Control Flow:** Railway Oriented Programming. No exceptions for domain logic.
+4.  **Execution:** Intents as Contracts. Infrastructure returns Sum Types; models parse.
+5.  **Configuration:** EnvVars as Foreign Reality. Translate to pure AppConfig.
+6.  **Storage:** DB as Foreign Reality. Stores are Pydantic models injected as fields.
+7.  **Translation:** Foreign Models with `.to_domain()`. Declarative mapping at the border.
+8.  **Coordination:** Orchestrators are Pydantic models with dependencies as fields.
+9.  **Workflow:** Process as State Machine. Transitions are methods on source state.
+10. **Infrastructure:** Capability as Data. Model what infrastructure expects.
+
+**→ Read the [Architecture Spec](ref/arch.md) for the principles, then the [Patterns](ref/patterns/) for implementation.**
 
 ---
 
-## 🛡️ Automated Enforcement: "The Architect's Mirror"
+## 🔧 Cursor Agent Architecture
 
-EMDCA is not just a document; it is an active constraint system. This repository includes **The Architect's Mirror** (`.cursor/hooks/mirror.py`), a pure-Python AST analyzer that enforces the mandates in real-time.
+The `.cursor/` directory implements active enforcement for AI agents working in this codebase.
 
-It acts as a "Synthetic Supervisor" for both Human Developers and AI Agents, instantly flagging:
-- **Structural Violations**: Using `raise` or `await` in the Domain.
-- **Architectural Drift**: Importing external libraries (`boto3`) into the Pure Core.
-- **Procedural Habits**: Writing `Manager` classes instead of Aggregates.
+```
+.cursor/
+├── hooks.json              # Event configuration
+├── mirror-feedback.md      # ← SIGNALS WRITTEN HERE (agent reads this)
+├── hooks/
+│   └── mirror.py           # AST analyzer → writes to mirror-feedback.md
+└── rules/
+    ├── pattern-00-master-architecture/   # ← Instructs: "RUN mirror.py!"
+    ├── pattern-01-factory-construction/
+    ├── pattern-02-state-sum-types/
+    ├── pattern-03-railway-control-flow/
+    ├── pattern-04-execution-intent/
+    ├── pattern-05-config-injection/
+    ├── pattern-06-storage-foreign-reality/
+    ├── pattern-07-acl-translation/
+    ├── pattern-08-orchestrator-loop/
+    ├── pattern-09-workflow-state-machine/
+    └── pattern-10-infrastructure-capability/
+```
 
-The Mirror runs:
-1.  **Locally**: Inside Cursor via Hooks (`afterFileEdit`).
-2.  **Remotely**: In GitHub Actions (`.github/workflows/ci.yml`).
+### Rules (Passive Context)
+
+Each `pattern-*/RULE.md` contains:
+- **Frontmatter** with `globs` defining which files the rule applies to
+- **Type specifications** showing correct EMDCA patterns
+- **Anti-patterns** showing what to avoid
+
+The **master rule** (`pattern-00`) is `alwaysApply: true` and instructs the agent to run `mirror.py` after edits.
+
+### Hooks (Active Feedback via File)
+
+`hooks.json` configures:
+
+| Event | Trigger | Action |
+| :--- | :--- | :--- |
+| `afterFileEdit` | Agent saves a file | Write signals to `mirror-feedback.md` |
+| `stop` | Agent completes turn | Clear `mirror-feedback.md` |
+
+**Two Modes:**
+
+1. **Hook mode** (automatic): `afterFileEdit` triggers mirror.py → writes to `mirror-feedback.md`
+2. **CLI mode** (agent runs): `python3 .cursor/hooks/mirror.py <file>` → prints to stdout
+
+The master rule tells the agent to **run mirror.py manually** after edits. The agent sees violations directly in terminal output.
+
+```mermaid
+flowchart TB
+    subgraph Rules
+        R[pattern-00 RULE.md] -->|always apply| C[Agent Context]
+        R -->|instructs| I[RUN mirror.py!]
+    end
+    
+    subgraph Agent Action
+        Agent -->|runs| M[python3 mirror.py file.py]
+        M -->|stdout| O[Signals/Violations]
+        O --> Agent
+    end
+    
+    subgraph Backup Hook
+        E[File Edit] --> H[afterFileEdit hook]
+        H --> M2[mirror.py]
+        M2 -->|writes| F[mirror-feedback.md]
+    end
+```
+
+### Design Principle
+
+This combines **deterministic** (AST pattern matching) with **non-deterministic** (LLM judgment). The mirror detects mechanical signals; the rule instructs the agent to run it; the agent decides if they're violations in context.
+
+---
+
+## 🧪 Testing Philosophy
+
+EMDCA testing follows the same principles as the architecture itself:
+
+**Test Boundaries, Not Internals**
+```
+✅ Test: Does RawHookInput.to_domain() correctly parse JSON into Sum Types?
+❌ Skip: Does a frozen Pydantic model hold the values I put in it?
+```
+
+**No Mocks — Real Objects**
+```python
+# ❌ Traditional: Mock the dependency
+user = Mock()
+user.email = "not-validated"
+
+# ✅ EMDCA: Construct the real thing
+user = User(email=Email("real@email.com"), name=Name("Real"))
+```
+
+**Construction IS Validation**
+If you can construct a domain object, it's valid. Tests verify the parsing boundaries, not the type invariants.
+
+**Fixture Files = Expected Signals**
+```
+tests/fixtures/signals/
+├── try_block.py      # Should trigger 'try_block' signal
+├── raise_stmt.py     # Should trigger 'raise_stmt' signal
+└── await_expr.py     # Should trigger 'await_expr' signal
+```
+
+The filename IS the test assertion. No hardcoding.
 
 ---
 
@@ -58,23 +155,26 @@ The Mirror runs:
 | Document | What It Is |
 | :--- | :--- |
 | **[Manifesto](manifesto.md)** | The **Philosophy**. Why explicit modeling matters. |
-| **[Architecture Spec](spec/arch.md)** | The **Laws**. The 10 mandates in detail. |
-| **[Structure Guide](spec/structure.md)** | The **Map**. Vertical slice file organization. |
-| **[Patterns Library](spec/patterns/)** | The **Blueprints**. Idiomatic Python implementations. |
-| **[Agentic Systems](spec/agentic.md)** | The **Translation**. "Agent" buzzwords → real patterns. |
-| **[Reference Skeleton](spec/skeleton.md)** | The **Template**. A working starter structure. |
+| **[Architecture Spec](ref/arch.md)** | The **Laws**. The 10 mandates in detail. |
+| **[Structure Guide](ref/structure.md)** | The **Map**. Vertical slice file organization. |
+| **[Patterns Library](ref/patterns/)** | The **Blueprints**. Idiomatic Python implementations. |
+| **[Agentic Systems](ref/agentic.md)** | The **Translation**. "Agent" buzzwords → real patterns. |
+| **[Reference Skeleton](ref/src/)** | The **Template**. A working starter structure. |
 
 ---
 
 ## 🚀 Getting Started
 
-**To Learn:** Read the [Manifesto](manifesto.md), then the [Architecture Spec](spec/arch.md).
+**To Learn:** 
+1. Read this README for the overview
+2. Read the [Architecture Spec](ref/arch.md) for the principles
+3. Read the [Patterns](ref/patterns/) for implementation details
 
-**To Reference:** Copy `spec/` into your project. Use the patterns as a style guide.
+**To Reference:** Copy `ref/` into your project. Use the patterns as a style guide.
 
-**To Build:** Start from the [Reference Skeleton](spec/skeleton.md). Every file in `spec/src/` contains structural docstrings linking back to the mandates.
+**To Build:** Start from the [Reference Skeleton](ref/src/). Every file links back to the mandates.
 
-**For AI Agents:** This repo is designed for you. The `.cursor/rules/` prime your context, and the Mirror hooks correct your output. The constraints act as guardrails—hallucinations become compilation errors.
+**For AI Agents:** This repo is designed for you. The `.cursor/rules/` prime your context. The constraints act as guardrails—hallucinations become compilation errors.
 
 ---
 

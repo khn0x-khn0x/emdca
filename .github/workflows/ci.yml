@@ -37,18 +37,3 @@ jobs:
       - name: Run Tests (Pytest)
         run: uv run pytest
 
-      - name: Enforce Architecture (The Mirror)
-        run: |
-          # Run mirror.py in batch mode
-          OUTPUT=$(uv run python3 .cursor/hooks/mirror.py)
-          echo "Mirror Output: $OUTPUT"
-          
-          # Check if output contains a followup_message (indication of violation)
-          if echo "$OUTPUT" | grep -q "followup_message"; then
-            echo "::error::Architectural Violations Found!"
-            # Extract the message for display (simple sed hack)
-            echo "$OUTPUT"
-            exit 1
-          fi
-          echo "Architecture Compliant."
-

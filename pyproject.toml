@@ -4,11 +4,7 @@ version = "0.1.0"
 description = "Explicitly Modeled Data-Centric Architecture Reference"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = [
-    "pydantic>=2.12.5",
-    "uvicorn>=0.38.0",
-    "fastapi>=0.115.0",
-]
+dependencies = ["pydantic>=2.12.5", "uvicorn>=0.38.0", "fastapi>=0.115.0"]
 
 [tool.ruff]
 line-length = 88
@@ -31,18 +27,31 @@ quote-style = "double"
 indent-style = "space"
 
 [tool.ruff.lint.per-file-ignores]
-"**/*.py" = ["E501"]  # assert allowed in tests
+"**/*.py" = ["E501"] # assert allowed in tests
 
 [tool.pyright]
 typeCheckingMode = "strict"
 venvPath = "."
 venv = ".venv"
-include = ["spec/src"]
+include = ["ref/src", ".cursor/hooks", "tests"]
 exclude = ["**/__pycache__"]
+extraPaths = [".cursor/hooks"]
 reportMissingImports = true
 reportMissingTypeStubs = false
 
+[tool.mypy]
+python_version = "3.13"
+strict = true
+mypy_path = ".cursor/hooks"
+exclude = ["ref/"]
+
+[[tool.mypy.overrides]]
+module = "pytest"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "conftest"
+disable_error_code = ["no-any-return", "untyped-decorator"]
+
 [dependency-groups]
-dev = [
-    "pytest>=9.0.2",
-]
+dev = ["pytest>=9.0.2", "ruff>=0.8.0", "mypy>=1.14.0"]
