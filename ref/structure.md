@@ -16,16 +16,16 @@ src/
 │   │   ├── entity.py        # Internal Truth (Domain Models)
 │   │   ├── api.py           # Foreign Reality (Our HTTP API Schema)
 │   │   ├── vendor.py        # Foreign Reality (External Vendor Schema)
-│   │   ├── store.py         # Foreign Reality (Database Schema)
+│   │   ├── db.py            # Foreign Reality (Database Schema)
+│   │   ├── contract.py      # Intents & Interfaces (Data Contracts)
 │   │   └── workflow.py      # Aggregates with decision methods
 │   │
 │   └── system/              # Context: System Capabilities
-│       ├── config.py        # Internal Truth (AppConfig, ConfigResult)
-│       └── env.py           # Foreign Reality (EnvVars)
+│       └── config.py        # AppConfig (BaseSettings) - Schema of Environment
 │
 ├── service/                 # THE SHELL (Orchestration & Execution)
-│   ├── context_1.py         # Orchestrator/Executor models for Context 1
-│   └── app.py               # Composition Root Helpers
+│   ├── context_1.py         # Executors & Runtimes for Context 1
+│   └── app.py               # Service Classes
 │
 └── api/                     # THE INTERFACE (Impure, Horizontal)
     ├── app.py               # The App Definition (Builds FastAPI instance)
@@ -52,33 +52,55 @@ Contexts are not islands. They share a "Ubiquitous Language."
 
 ---
 
+## 🏷️ The Naming Mandate: Concepts over Layers
+
+Never name a file after a generic technical pattern (`model.py`, `logic.py`, `utils.py`, `helpers.py`).
+Name files after the **Business Concept** they contain.
+
+**Why?**
+Generic names create "Junk Drawers." Conceptual names create **Context Boundaries**.
+
+*   ❌ `domain/pricing/utils.py` (Junk Drawer)
+*   ✅ `domain/pricing/discounts.py` (Specific Business Rule)
+
+*   ❌ `domain/order/model.py` (Generic)
+*   ✅ `domain/order/order.py` (The Concept Itself)
+
+*   ❌ `domain/auth/helpers.py`
+*   ✅ `domain/auth/token.py` (The Concept)
+
+**Exceptions (Foreign Reality):**
+*   `api.py`, `db.py`, `vendor.py` are acceptable because they explicitly model the **Boundary** itself. Their "Concept" IS the Interface.
+
+---
+
 ## 📂 `src/domain/` (The Core)
 
 This directory is grouped by **Context** (Business Area).
 
-**All domain models MUST have `model_config = {"frozen": True}`.**
+**All domain objects MUST be frozen Pydantic models (`BaseModel`).**
 
 **Allowed File Types per Context:**
 
-1.  **Internal Truth (`entity.py`, `user.py`, `order.py`):**
-    *   Frozen Pydantic models with `model_config = {"frozen": True}`.
+1.  **Internal Truth (`entity.py`, `user.py`):**
+    *   Frozen Pydantic models.
     *   Defines the language of the business.
-    *   **Banned Names:** `model.py` (Too generic. Name the file after the concept).
 
 2.  **Atoms (`types.py`, `values.py`):**
     *   Context-specific Value Objects (`OrderId`) and Smart Enums (`OrderStatus`).
+    *   **Smart Enums:** Define the State Machine Graph and Logic.
     *   Use Pydantic built-ins (`EmailStr`, `PositiveInt`) over hand-rolled validators.
 
-3.  **Foreign Reality (`api.py`, `vendor.py`, `store.py`):**
+3.  **Foreign Reality (`api.py`, `vendor.py`, `db.py`):**
     *   **`api.py`:** The schema of our own API (Request/Response models).
     *   **`vendor.py`:** The schema of external APIs we consume.
-    *   **`store.py`:** The schema of our Database Tables (e.g., `DbOrder`).
+    *   **`db.py`:** The schema of our Database Tables (e.g., `DbOrder`).
     *   All Foreign Models own a `.to_domain()` method.
 
 4.  **Aggregates & Workflows (`workflow.py`, `order.py`):**
     *   Frozen Pydantic models with **decision methods**.
-    *   Methods return `Result`, `Intent`, or new state—never standalone functions.
-    *   **Banned Names:** `logic.py`, `utils.py`, `helpers.py`, `process.py`.
+    *   Methods return `Result` (Railway), `Intent` (Execution), or new state.
+    *   **Banned:** Side effects (I/O).
 
 ---
 
@@ -98,12 +120,11 @@ The Service Layer is the **Imperative Shell**. It handles Orchestration and Exec
 
 *   **Responsibility:** Fetch Data → Call Logic → Save Data.
 *   **Contains:**
-    *   **Stores:** Frozen Pydantic models that handle DB I/O.
-    *   **Orchestrators:** Frozen Pydantic models with **dependencies as fields** (stores, gateways, executors).
-    *   **Executors:** Frozen Pydantic models that compose Intent + RawResult → DomainOutcome.
+    *   **Executors:** Service Classes that execute Intents (I/O).
+    *   **Runtimes:** Service Classes that drive State Machines (Loops).
 *   **Philosophy:** Dumb code. No business rules. Just wiring and execution.
-*   **No standalone functions.** All logic is methods on models.
-*   **Dependencies are fields.** Orchestrators declare what they need; composition root injects it.
+*   **Structure:** **Plain Python Classes**. Dependencies injected via `__init__`.
+*   **No Pydantic Models:** Do not use `BaseModel` for Services.
 
 ---
 
@@ -129,50 +150,34 @@ This is the **Big Bang**. It is the only place in the system where imports cross
 
 ```python
 # src/main.py
-import os
-import sys
 import uvicorn
-from pydantic import ValidationError
-from domain.system.env import EnvVars
-from domain.system.config import ConfigLoaded, ConfigInvalid, ConfigResult
+from domain.system.config import AppConfig
+from service.order import OrderExecutor, OrderRuntime
 from api.app import create_api
-
-def load_config(raw_env: dict) -> ConfigResult:
-    """Parse environment into config. Returns Sum Type, no exceptions escape."""
-    try:
-        config = EnvVars.model_validate(raw_env).to_domain()
-        return ConfigLoaded(kind="loaded", config=config)
-    except ValidationError as e:
-        errors = tuple(str(err) for err in e.errors())
-        return ConfigInvalid(kind="invalid", errors=errors)
-
 
 def main():
     """
     The Launcher.
-    1. Validate Reality (Env)
-    2. Translate to Truth (Config)
-    3. Wire Infrastructure (DI)
-    4. Launch Interface (App)
+    1. Load Config (Crash on Failure)
+    2. Wire Services (DI)
+    3. Launch Interface (App)
     """
     
-    # 1. Load Config (returns Sum Type)
-    result = load_config(dict(os.environ))
+    # 1. Load Config (System crashes if env is missing)
+    # AppConfig inherits BaseSettings, so it loads from env/files automatically.
+    config = AppConfig()
     
-    match result:
-        case ConfigInvalid(errors=errs):
-            print(f"FATAL: Invalid Environment Configuration\n{errs}")
-            sys.exit(1)
-        
-        case ConfigLoaded(config=config):
-            # 2. Wire Dependencies (inject as fields)
-            store = OrderStore()
-            gateway = PaymentGateway(api_key=config.stripe_key)
-            orchestrator = OrderOrchestrator(store=store, gateway=gateway)
-            
-            # 3. Launch Interface (pass wired orchestrators)
-            app = create_api(config, orchestrator=orchestrator)
-            uvicorn.run(app, host="0.0.0.0", port=8000)
+    # 2. Wire Dependencies (Service Classes)
+    # Executors take Config
+    store = OrderExecutor(table_name=config.db.table_name)
+    gateway = PaymentGateway(api_key=config.stripe.key)
+    
+    # Runtimes take Executors
+    runtime = OrderRuntime(store=store, gateway=gateway)
+    
+    # 3. Launch Interface (pass wired services)
+    app = create_api(runtime=runtime)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 
 
 if __name__ == "__main__":

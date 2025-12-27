@@ -1,160 +1,96 @@
-# Pattern 02: State (Sum Types Over Product Types)
+# Pattern 02: State (Sum Types)
 
 ## The Principle
-Software complexity grows with the number of possible states. We must minimize the state space by making invalid combinations of state unrepresentable.
+Software complexity grows with the number of possible states. We must minimize the state space by making invalid combinations of state unrepresentable. We use **Sum Types** (Discriminated Unions) to model mutually exclusive states, rather than **Product Types** (Flags/Nullables) that allow impossible combinations.
 
 ## The Mechanism
-Mutually exclusive realities are modeled as **Discriminated Unions (Sum Types)**. Each context type contains specific data required for that reality. Transitions are methods on the source state that return the target state.
+1.  **Smart Enums:** Define the vocabulary and properties of the state graph.
+2.  **Distinct Models:** Each state is a separate Pydantic model.
+3.  **Union Type:** The state is the Union of these models.
+4.  **Transitions:** Methods on the *Source State* return the *Target State*.
 
 ---
 
-## 1. The God Model (Anti-Pattern)
-Product Types (classes with many fields) allow invalid combinations of data to represent impossible states.
+## 1. The Flag Hell (Anti-Pattern)
+Using boolean flags or optional fields creates states that shouldn't exist (e.g., `is_shipped=True` but `tracking_id=None`).
 
-### ❌ Anti-Pattern: The Nullable Field Explosion
+### ❌ Anti-Pattern: Product Types
 ```python
 class Order(BaseModel):
-    id: UUID
-    status: Literal["pending", "shipped", "cancelled"]
+    status: str
+    is_shipped: bool
+    tracking_id: str | None  # ❌ Ambiguous: Can be None if shipped?
     
-    tracking_id: Optional[str] = None  # ❌ Allows impossible states
-    cancellation_reason: Optional[str] = None
-    shipped_at: Optional[datetime] = None
-
-    def ship(self, tracking_id: str):
+    def ship(self):
         if self.status != "pending":
-            raise ValueError("Can only ship pending orders")  # ❌ Runtime check
-        self.status = "shipped"  # ❌ Mutation
+            raise Exception("Invalid state")  # ❌ Implicit state check
 ```
 
 ---
 
-## 2. The Discriminated Union (Sum Type)
-We split the "God Model" into distinct, mutually exclusive types. Each type contains *only* the data valid for that state.
+## 2. The Sum Type (Discriminated Union)
+Each state carries only the data valid for that state.
 
-### ✅ Pattern: Explicit State Variants
+### ✅ Pattern: Explicit States
 ```python
-from typing import Literal, Annotated
-from pydantic import BaseModel, Field
+from enum import StrEnum
+
+class OrderStatus(StrEnum):
+    PENDING = "pending"
+    SHIPPED = "shipped"
 
 class PendingOrder(BaseModel):
     model_config = {"frozen": True}
-    kind: Literal["pending"]  # NO DEFAULT
-    id: UUID
+    kind: Literal[OrderStatus.PENDING]
+    id: OrderId
     items: tuple[OrderItem, ...]
+    
+    def ship(self, tracking_id: TrackingId, shipped_at: datetime) -> "ShippedOrder":
+        """Transition: Pending → Shipped."""
+        return ShippedOrder(
+            kind=OrderStatus.SHIPPED,
+            id=self.id,
+            items=self.items,
+            tracking_id=tracking_id,
+            shipped_at=shipped_at,
+        )
 
 class ShippedOrder(BaseModel):
     model_config = {"frozen": True}
-    kind: Literal["shipped"]  # NO DEFAULT
-    id: UUID
+    kind: Literal[OrderStatus.SHIPPED]
+    id: OrderId
     items: tuple[OrderItem, ...]
-    tracking_id: str  # Structural Proof: MUST exist
+    tracking_id: TrackingId  # Must exist!
     shipped_at: datetime
 
-class CancelledOrder(BaseModel):
-    model_config = {"frozen": True}
-    kind: Literal["cancelled"]  # NO DEFAULT
-    id: UUID
-    reason: str
-
-# Sum Type (Python 3.12+)
 type Order = Annotated[
-    PendingOrder | ShippedOrder | CancelledOrder, 
+    PendingOrder | ShippedOrder,
     Field(discriminator="kind")
 ]
 ```
 
 ---
 
-## 3. Transitions as Methods on Source State
-Transitions are methods on the source state that return the target state. Clock is injected as a frozen Pydantic model.
+## 3. Handling State (Pattern Matching)
+Use `match/case` to handle each state explicitly.
 
-### ✅ Pattern: Transition Method
+### ✅ Pattern: Exhaustive Matching
 ```python
-class Clock(BaseModel):
-    """Injectable time dependency."""
-    model_config = {"frozen": True}
-    
-    def now(self) -> datetime:
-        return datetime.now(timezone.utc)
-
-
-class PendingOrder(BaseModel):
-    model_config = {"frozen": True}
-    kind: Literal["pending"]
-    id: UUID
-    items: tuple[OrderItem, ...]
-    
-    def ship(self, tracking_id: str, clock: Clock) -> ShippedOrder:
-        """Transition: Pending → Shipped. Type signature guarantees validity."""
-        return ShippedOrder(
-            kind="shipped",
-            id=self.id,
-            items=self.items,
-            tracking_id=tracking_id,
-            shipped_at=clock.now(),
-        )
-    
-    def cancel(self, reason: str) -> CancelledOrder:
-        """Transition: Pending → Cancelled."""
-        return CancelledOrder(
-            kind="cancelled",
-            id=self.id,
-            reason=reason,
-        )
-```
-
----
-
-## 4. Handling State (Pattern Matching)
-To work with a Sum Type, use structural pattern matching. Logic lives in a handler model.
-
-### ✅ Pattern: Handler with Exhaustive Matching
-```python
-class OrderSummaryHandler(BaseModel):
-    """Handler model for order summary logic."""
-    model_config = {"frozen": True}
-    
-    def summarize(self, order: Order) -> str:
-        match order:
-            case PendingOrder():
-                return "Order is being prepared."
-            
-            case ShippedOrder(tracking_id=tid):
-                return f"Order shipped! Tracking: {tid}"
-            
-            case CancelledOrder(reason=r):
-                return f"Order cancelled because: {r}"
-```
-
----
-
-## 5. Alternative: The Smart Enum (For Simple States)
-When states do not carry unique data, a **Smart Enum** is the preferred lightweight alternative.
-
-### ✅ Pattern: Behavioral Enums
-```python
-from enum import StrEnum
-
-class PaymentStatus(StrEnum):
-    PENDING = "pending"
-    PAID = "paid"
-    FAILED = "failed"
-
-    @property
-    def is_terminal(self) -> bool:
-        return self in {PaymentStatus.PAID, PaymentStatus.FAILED}
-
-    @property
-    def can_retry(self) -> bool:
-        return self == PaymentStatus.FAILED
+def print_status(order: Order):
+    match order:
+        case PendingOrder():
+            print("Order is pending")
+        case ShippedOrder(tracking_id=tid):
+            print(f"Shipped: {tid}")
 ```
 
 ---
 
 ## Cognitive Checks
-- [ ] **No Optional Flags:** Did I remove `is_shipped`, `is_cancelled` booleans?
-- [ ] **No Default on kind:** Is every `kind: Literal[...]` explicit at construction?
-- [ ] **Transitions are Methods:** Is `ship()` a method on `PendingOrder`, not a standalone function?
-- [ ] **Clock is a Model:** Is time injected as `Clock(BaseModel)`, not `ClockProtocol`?
-- [ ] **Structural Proof:** Does `ShippedOrder` contain data that cannot exist in `PendingOrder`?
+- [ ] **No Optional Flags:** Did I remove `is_active`, `is_deleted`?
+- [ ] **No Nullable State Fields:** Did I remove `error: str | None`?
+- [ ] **Distinct Classes:** Is `Pending` a different class from `Active`?
+- [ ] **Smart Enum:** Does `kind` use a `StrEnum`?
+- [ ] **Transitions:** Are methods defined on the specific state class?
+- [ ] **Pure Transitions:** Do transitions take Data (datetime), not Services (Clock)?
+- [ ] **Value Objects:** Do I use `OrderId` instead of `str`?

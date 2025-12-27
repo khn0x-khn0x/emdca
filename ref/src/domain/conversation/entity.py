@@ -17,19 +17,23 @@ Example Implementation:
 from typing import Literal, Annotated
 from pydantic import BaseModel, Field
 
+class ConversationKind(StrEnum):
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
 class Active(BaseModel):
     model_config = {"frozen": True}
-    kind: Literal["active"]
-    conversation_id: str
+    kind: Literal[ConversationKind.ACTIVE]
+    id: ConversationId
 
-    def archive(self, reason: str) -> "Archived":
-        return Archived(kind="archived", conversation_id=self.conversation_id, reason=reason)
+    def archive(self, reason: ArchiveReason) -> "Archived":
+        return Archived(kind=ConversationKind.ARCHIVED, id=self.id, reason=reason)
 
 class Archived(BaseModel):
     model_config = {"frozen": True}
-    kind: Literal["archived"]
-    conversation_id: str
-    reason: str
+    kind: Literal[ConversationKind.ARCHIVED]
+    id: ConversationId
+    reason: ArchiveReason
 
 type Conversation = Annotated[Active | Archived, Field(discriminator='kind')]
 ```

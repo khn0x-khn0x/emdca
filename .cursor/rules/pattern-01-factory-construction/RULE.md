@@ -9,33 +9,49 @@ alwaysApply: false
 ## Valid Code Structure
 
 ```python
+# Smart Enum
+class CreationResultKind(StrEnum):
+    CREATED = "created"
+    REJECTED = "rejected"
+
 # Value Objects: Use Pydantic built-ins
 class User(BaseModel):
     model_config = {"frozen": True}
-    email: EmailStr  # NOT str
-    age: PositiveInt  # NOT int
+    email: EmailStr
+    age: PositiveInt = Field(ge=18)  # Structural Constraint!
+    
+    # Injected Capability
+    emailer: EmailCapability
 
 # Result Types: Explicit success/failure
 class UserCreated(BaseModel):
     model_config = {"frozen": True}
-    kind: Literal["created"]  # NO DEFAULT
+    kind: Literal[CreationResultKind.CREATED]
     user: User
 
 class UserRejected(BaseModel):
     model_config = {"frozen": True}
-    kind: Literal["rejected"]  # NO DEFAULT
-    reason: str
+    kind: Literal[CreationResultKind.REJECTED]
+    reason: RejectionReason
 
 type CreateUserResult = UserCreated | UserRejected
 
-# Factory: Method on a model, returns Result
-class UserFactory(BaseModel):
-    model_config = {"frozen": True}
-    
-    def create(self, raw: RawUserData) -> CreateUserResult:
-        if raw.age < 18:
-            return UserRejected(kind="rejected", reason="Must be 18+")
-        return UserCreated(kind="created", user=User(email=raw.email, age=raw.age))
+# Factory: Pure Construction (Crash on Failure) + Assembly
+class UserFactory:
+    @staticmethod
+    def create(raw: dict, emailer: EmailCapability) -> CreateUserResult:
+        # 1. Parse Data (Pydantic handles validation. If it fails, it crashes.)
+        # This is correct. The system does not accept invalid input.
+        user_data = UserData.model_validate(raw)
+        
+        # 2. Inject Capability
+        user = User(
+            email=user_data.email, 
+            age=user_data.age, 
+            emailer=emailer
+        )
+        
+        return UserCreated(kind=CreationResultKind.CREATED, user=user)
 ```
 
 ## Constraints
@@ -44,7 +60,8 @@ class UserFactory(BaseModel):
 |----------|-----------|
 | `model_config = {"frozen": True}` | Default values on fields |
 | `EmailStr`, `PositiveInt` (Pydantic built-ins) | `str`, `int` for domain concepts |
-| Factory as method on model | Standalone `def create_user()` functions |
-| Return `Success \| Failure` Sum Type | `raise ValueError()` |
-| `kind: Literal["..."]` explicit | `kind: Literal["..."] = "..."` |
-
+| **Factory simply calls model_validate** | **Factory manual if/else checks** |
+| **Constraint encoded in Type** | **Constraint encoded in Factory Logic** |
+| **Factory injects Capabilities** | **Factory is Pydantic Model** |
+| Crash on invalid input | `try/except` inside Domain |
+| **Smart Enums for Kinds** | **String Literals** |

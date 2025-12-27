@@ -1,10 +1,11 @@
 # Pattern 08: Coordination (The Orchestrator)
 
 ## The Principle
-A system needs a "driver" that does no thinking, only moving. It coordinates the flow of data between models and execution shell.
+A system needs a "driver" that does no thinking, only moving. It coordinates the flow of data between models and execution shell. We call this the **Runtime** or **Orchestrator**.
+In EMDCA, the **Runtime** is a **Smart Domain Model** that encapsulates the coordination logic and holds the necessary Capabilities.
 
 ## The Mechanism
-The **Orchestrator** is a frozen Pydantic model with a coordination method. It runs a "dumb" procedural loop: Fetch → Translate → Decide → Act → Persist. It contains no business rules, only flow control.
+The **Runtime** is a Domain Model (`BaseModel`). It runs a "dumb" reactive loop: Load → Step → Save → Execute. It contains no business rules, only flow control.
 
 ---
 
@@ -22,86 +23,68 @@ def process_payment(payment_id: str, db: Session):  # ❌ Standalone function
 
 ---
 
-## 2. The Orchestrator Model
-The Orchestrator is a frozen Pydantic model with **dependencies as fields**. Application-scoped dependencies (stores, gateways) are injected; request-scoped resources (sessions) are passed as arguments.
+## 2. The Runtime (Smart Model)
 
-### ✅ Pattern: Dependencies as Fields
+The Runtime drives the State Machine. It does not decide; it merely executes the Domain's decisions.
+
+### ✅ Pattern: The Reactive Loop
 ```python
-from typing import Literal
-from pydantic import BaseModel
+from enum import StrEnum
 
-class PaymentNotFound(BaseModel):
-    model_config = {"frozen": True}
-    kind: Literal["not_found"]
-    payment_id: str
+class PaymentResultKind(StrEnum):
+    NOT_FOUND = "not_found"
+    PROCESSED = "processed"
 
-class PaymentProcessed(BaseModel):
-    model_config = {"frozen": True}
-    kind: Literal["processed"]
-    payment_id: str
-
-class VerificationRequired(BaseModel):
-    model_config = {"frozen": True}
-    kind: Literal["verification_required"]
-    reason: str
-
-type ProcessPaymentResult = PaymentNotFound | PaymentProcessed | VerificationRequired
-
-
-class PaymentOrchestrator(BaseModel):
-    """Dumb orchestrator—coordinates but does not decide."""
-    model_config = {"frozen": True}
+class PaymentRuntime(BaseModel):
+    """Active Domain Model. Drives the loop."""
+    model_config = {"frozen": True, "arbitrary_types_allowed": True}
     
-    store: PaymentStore      # Injected: handles DB I/O
-    gateway: PaymentGateway  # Injected: handles external payment API
+    store: PaymentStore      # Smart Capability
+    gateway: PaymentGateway  # Smart Capability
     
-    def process(self, payment_id: str, db: Session) -> ProcessPaymentResult:
-        # 1. Fetch (via injected store)
-        fetch_result = self.store.fetch(payment_id, db)
+    async def run(self, payment_id: PaymentId, event: PaymentEvent) -> ProcessPaymentResult:
+        # 1. Load State (Active Store)
+        state = await self.store.load(payment_id)
         
-        match fetch_result:
-            case PaymentNotFound():
-                return fetch_result
-            
-            case PaymentFound(payment=payment):
-                # 2. Decide (Pure Domain—method on Payment)
-                intent = payment.decide_action()
-                
-                # 3. Act (via injected dependencies)
-                match intent:
-                    case ProcessIntent(new_state=s):
-                        self.gateway.charge(s.amount)
-                        self.store.save(s, db)
-                        return PaymentProcessed(kind="processed", payment_id=payment_id)
-                    
-                    case RequireVerificationIntent(reason=r):
-                        return VerificationRequired(kind="verification_required", reason=r)
+        # Handle "Not Found" as a valid result track
+        if not state:
+            return PaymentNotFound(kind=PaymentResultKind.NOT_FOUND, payment_id=payment_id)
+        
+        # 2. Pure Step (Domain Logic)
+        new_state, intent = state.handle(event)
+        
+        # 3. Save State (Active Store)
+        await self.store.save(payment_id, new_state)
+        
+        # 4. Execute Intent (Active Gateway)
+        await self.gateway.execute(intent)
+        
+        return PaymentProcessed(kind=PaymentResultKind.PROCESSED, payment_id=payment_id)
 ```
 
 ---
 
 ## 3. Transaction Boundaries
-The Orchestrator is responsible for the **Unit of Work**. Wrap in transaction context.
+The Runtime is responsible for the **Unit of Work**. Wrap in transaction context.
 
 ### ✅ Pattern: Explicit Transactions
 ```python
-class TransactionalOrchestrator(BaseModel):
-    """Orchestrator with transaction boundary."""
+class TransactionalRuntime(BaseModel):
+    """Runtime with transaction boundary."""
     model_config = {"frozen": True}
     
-    orchestrator: PaymentOrchestrator
+    runtime: PaymentRuntime
     
-    def process_safely(self, payment_id: str, db: Session) -> ProcessPaymentResult:
-        with db.begin():
-            return self.orchestrator.process(payment_id, db)
+    async def run_safely(self, payment_id: PaymentId, db: Session) -> ProcessPaymentResult:
+        async with db.begin():
+            return await self.runtime.run(payment_id, event)
 ```
 
 ---
 
 ## Cognitive Checks
-- [ ] **Dependencies as Fields:** Are stores, gateways, executors declared as fields?
-- [ ] **No If Statements:** Does the orchestrator contain `if payment.amount > X`? (Move to Domain)
-- [ ] **No Object Creation:** Does the orchestrator call `Payment(...)`? (Use a Factory)
-- [ ] **Orchestrator is Model:** Is it a `BaseModel` with methods, not a standalone function?
-- [ ] **Explicit Results:** Does it return Sum Types, not `None` or raise?
-- [ ] **Dumb Piping:** Does it just pass data between models without modification?
+- [ ] **Runtime is Model:** Is it a `BaseModel`?
+- [ ] **Capabilities Injected:** Does it hold `store` and `gateway` as fields?
+- [ ] **No If Statements:** Does the runtime contain `if payment.amount > X`? (Move to Domain)
+- [ ] **Step Delegation:** Does it call `state.handle()` or `state.step()`?
+- [ ] **Active Execution:** Does it call `gateway.execute(intent)`?

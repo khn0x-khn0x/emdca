@@ -1,70 +1,71 @@
-# Pattern 09: Workflow (Process as State Machine)
+# Pattern 09: Workflow (State Machine)
 
 ## The Principle
-The sequence of business steps is Business Logic, not plumbing. Workflows must be modeled as State Machines in the Domain.
+Complex business processes are State Machines. We model them as explicit state transitions. The Workflow is a sequence of `(State, Event) -> (NewState, Intent)` transitions.
 
 ## The Mechanism
-**Workflow Models** represent the lifecycle of a process. Each state is a frozen Pydantic model with transition methods that return the next state and an Intent.
+1.  **States:** Sum Types representing every step, discriminated by a **Smart Enum**.
+2.  **Events:** Sum Types representing what happened.
+3.  **Transition:** A pure function `step(state, event)` returning the next state and side effects (Intents).
+4.  **Runtime:** An **Active Domain Model** that loads state, calls transition, saves state, and returns output.
 
 ---
 
-## 1. The Procedural Trap (Anti-Pattern)
-Defining the sequence of events as imperative code makes the process rigid and opaque.
+## 1. The Procedural Workflow (Anti-Pattern)
+Implicit state in variables or database columns leads to spaghetti code.
 
-### ❌ Anti-Pattern: Hardcoded Sequence
+### ❌ Anti-Pattern: Status Checks
 ```python
-async def handle_signup(data):  # ❌ Standalone function
-    user = await create_user(data)
-    
-    if user.score > 50:  # ❌ Business logic in orchestrator
-        await send_email(user)
+if order.status == "pending" and event == "pay":
+    order.status = "paid"
+    send_email()
+elif order.status == "paid":
+    ...
 ```
 
 ---
 
-## 2. The Workflow Model (State Machine)
-We model the process as a Sum Type. Each state has transition methods.
+## 2. The State Machine
+The Type System defines the graph. Note the use of **Value Objects** (`UserId`, `Email`) instead of primitives.
 
-### ✅ Pattern: Explicit States with Transitions
+### ✅ Pattern: Explicit Transitions with Smart Enums
 ```python
-from typing import Literal, Annotated
-from pydantic import BaseModel, Field, EmailStr
+from enum import StrEnum
 
+# 1. Behavioral Type (The Graph Definition)
+class SignupKind(StrEnum):
+    PENDING = "pending"
+    VERIFIED = "verified"
+    COMPLETED = "completed"
 
+# 2. State Models (The Nodes)
 class SignupPending(BaseModel):
     model_config = {"frozen": True}
-    kind: Literal["pending"]  # NO DEFAULT
-    email: EmailStr
+    kind: Literal[SignupKind.PENDING]
+    email: Email
     
-    def verify(self, user_id: str) -> tuple["SignupVerified", "SendEmailIntent"]:
-        """Transition: Pending → Verified."""
-        new_state = SignupVerified(kind="verified", user_id=user_id)
-        intent = SendEmailIntent(to=self.email, template="welcome")
+    def verify(self, user_id: UserId) -> tuple["SignupVerified", "SendEmailIntent"]:
+        # Pure Transition: New State + Intent
+        new_state = SignupVerified(kind=SignupKind.VERIFIED, user_id=user_id)
+        intent = SendEmailIntent(to=self.email, template=TemplateName.WELCOME)
         return new_state, intent
-
 
 class SignupVerified(BaseModel):
     model_config = {"frozen": True}
-    kind: Literal["verified"]  # NO DEFAULT
-    user_id: str
+    kind: Literal[SignupKind.VERIFIED]
+    user_id: UserId
     
     def complete(self) -> tuple["SignupCompleted", "NotifyAdminIntent"]:
-        """Transition: Verified → Completed."""
-        new_state = SignupCompleted(kind="completed", user_id=self.user_id)
+        new_state = SignupCompleted(kind=SignupKind.COMPLETED, user_id=self.user_id)
         intent = NotifyAdminIntent(user_id=self.user_id)
         return new_state, intent
 
-
 class SignupCompleted(BaseModel):
     model_config = {"frozen": True}
-    kind: Literal["completed"]  # NO DEFAULT
-    user_id: str
-    
-    def step(self) -> tuple["SignupCompleted", "HaltIntent"]:
-        """Terminal state—no transition."""
-        return self, HaltIntent()
+    kind: Literal[SignupKind.COMPLETED]
+    user_id: UserId
 
-
+# 3. Sum Type (The Machine)
 type SignupState = Annotated[
     SignupPending | SignupVerified | SignupCompleted,
     Field(discriminator="kind")
@@ -73,91 +74,40 @@ type SignupState = Annotated[
 
 ---
 
-## 3. Handling State Transitions
-Pattern matching dispatches to the appropriate transition method.
+## 3. The Runtime (Active Model)
+The runtime manages the persistence lifecycle. It is a **Smart Domain Model** holding the Store Capability.
 
-### ✅ Pattern: Transition Dispatcher
+### ✅ Pattern: The Active Loop
 ```python
-class SignupWorkflow(BaseModel):
-    """Workflow handler with dispatch logic."""
-    model_config = {"frozen": True}
+class WorkflowRuntime(BaseModel):
+    """Active Domain Model. Drives the State Machine."""
+    model_config = {"frozen": True, "arbitrary_types_allowed": True}
     
-    def step(self, state: SignupState, verified: bool) -> tuple[SignupState, ActionIntent]:
-        match state:
-            case SignupPending() if verified:
-                return state.verify(user_id="generated-id")
-            
-            case SignupPending():
-                return state, NoOpIntent()
-            
-            case SignupVerified():
-                return state.complete()
-            
-            case SignupCompleted():
-                return state.step()
-```
-
----
-
-## 4. The Runner (Workflow Engine)
-The runner is a frozen Pydantic model with **dependencies as fields**.
-
-### ✅ Pattern: Workflow Runner Model
-```python
-class WorkflowRunner(BaseModel):
-    """Engine that drives the state machine."""
-    model_config = {"frozen": True}
+    # Injected Capability
+    store: WorkflowStore
     
-    workflow: SignupWorkflow    # Injected: the workflow logic
-    store: WorkflowStore        # Injected: handles state persistence
-    
-    def run(self, workflow_id: str, verified: bool, db: Session) -> RunResult:
-        # 1. Load Current State (via injected store)
-        state = self.store.fetch(workflow_id, db)
+    async def run_step(self, id: WorkflowId, event: WorkflowEvent) -> RunResult:
+        # 1. Load (Generic I/O)
+        state = await self.store.load(id)
+        if not state:
+            return WorkflowNotFound(id=id)
         
-        # 2. Compute Next Step (Pure)
-        new_state, intent = self.workflow.step(state, verified)
+        # 2. Step (Pure Logic)
+        # Delegate to the Domain Model
+        new_state, intent = state.handle(event)
         
-        # 3. Persist State (via injected store)
-        self.store.save(workflow_id, new_state, db)
+        # 3. Save (Generic I/O)
+        await self.store.save(id, new_state)
         
-        # 4. Return intent for execution
-        return RunResult(kind="stepped", intent=intent)
-```
-
----
-
-## 5. AI Agents as State Machines
-An "AI Agent" is a State Machine where transition logic uses inference.
-
-### ✅ Pattern: Agent States
-```python
-class AgentThinking(BaseModel):
-    model_config = {"frozen": True}
-    kind: Literal["thinking"]
-    history: tuple[Message, ...]
-    
-    def infer(self) -> tuple["AgentThinking", "InferNextStepIntent"]:
-        return self, InferNextStepIntent(history=self.history)
-
-
-class AgentDeciding(BaseModel):
-    model_config = {"frozen": True}
-    kind: Literal["deciding"]
-    llm_response: LlmResponse
-    
-    def route(self) -> tuple[AgentState, ActionIntent]:
-        if self.llm_response.tool_call == "calculator":
-            return AgentCalculating(kind="calculating"), CallToolIntent()
-        return AgentResponding(kind="responding"), SendMessageIntent()
+        # 4. Return Intent for Execution
+        return RunResult(kind=RunKind.STEPPED, intent=intent)
 ```
 
 ---
 
 ## Cognitive Checks
-- [ ] **Dependencies as Fields:** Does the runner have `store: WorkflowStore` as a field?
-- [ ] **No Defaults on kind:** Is every `kind: Literal[...]` explicit?
-- [ ] **Transitions are Methods:** Is `verify()` a method on `SignupPending`, not a standalone function?
-- [ ] **Runner is a Model:** Is the runner a `BaseModel`, not a standalone function?
-- [ ] **All States Frozen:** Does every state have `model_config = {"frozen": True}`?
-- [ ] **State Serializable:** Is the entire state serializable to JSON/DB?
+- [ ] **State Types:** Is every state a distinct model?
+- [ ] **Smart Enums:** Are state kinds defined by `StrEnum`?
+- [ ] **Value Objects:** Are IDs and fields typed (`UserId`), not strings?
+- [ ] **Pure Transitions:** Do transitions return `(State, Intent)`, doing no I/O?
+- [ ] **Runtime is Model:** Is the runner a `BaseModel` holding the Store?

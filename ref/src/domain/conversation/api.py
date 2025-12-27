@@ -15,12 +15,12 @@ from pydantic import BaseModel
 
 class CreateMessageRequest(BaseModel):
     model_config = {"frozen": True}
-    conversation_id: str
-    content: str
+    conversation_id: ConversationId
+    content: MessageContent
 
     def to_domain(self) -> "Message":
         return Message(
-            conversation_id=ConversationId(self.conversation_id),
+            conversation_id=self.conversation_id,
             content=self.content,
         )
 ```

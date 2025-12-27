@@ -9,40 +9,50 @@ alwaysApply: false
 ## Valid Code Structure
 
 ```python
+# Smart Enum (State Engine)
+class OrderStatus(StrEnum):
+    PENDING = "pending"
+    SHIPPED = "shipped"
+    CANCELLED = "cancelled"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self in (self.SHIPPED, self.CANCELLED)
+
 # Each state is its own type with only valid data for that state
 class PendingOrder(BaseModel):
     model_config = {"frozen": True}
-    kind: Literal["pending"]  # NO DEFAULT
-    id: UUID
+    kind: Literal[OrderStatus.PENDING]
+    id: OrderId
     items: tuple[OrderItem, ...]
     
-    def ship(self, tracking_id: str, clock: Clock) -> "ShippedOrder":
-        """Transition: Pending → Shipped. Type signature guarantees validity."""
+    def ship(self, tracking_id: TrackingId, shipped_at: datetime) -> "ShippedOrder":
+        """Transition: Pending → Shipped. Pure Calculation."""
         return ShippedOrder(
-            kind="shipped",
+            kind=OrderStatus.SHIPPED,
             id=self.id,
             items=self.items,
             tracking_id=tracking_id,
-            shipped_at=clock.now(),
+            shipped_at=shipped_at,  # Passed in, not read from clock
         )
     
-    def cancel(self, reason: str) -> "CancelledOrder":
+    def cancel(self, reason: CancellationReason) -> "CancelledOrder":
         """Transition: Pending → Cancelled."""
-        return CancelledOrder(kind="cancelled", id=self.id, reason=reason)
+        return CancelledOrder(kind=OrderStatus.CANCELLED, id=self.id, reason=reason)
 
 class ShippedOrder(BaseModel):
     model_config = {"frozen": True}
-    kind: Literal["shipped"]  # NO DEFAULT
-    id: UUID
+    kind: Literal[OrderStatus.SHIPPED]
+    id: OrderId
     items: tuple[OrderItem, ...]
-    tracking_id: str  # Structural proof: MUST exist in shipped state
+    tracking_id: TrackingId  # Structural proof: MUST exist in shipped state
     shipped_at: datetime
 
 class CancelledOrder(BaseModel):
     model_config = {"frozen": True}
-    kind: Literal["cancelled"]  # NO DEFAULT
-    id: UUID
-    reason: str
+    kind: Literal[OrderStatus.CANCELLED]
+    id: OrderId
+    reason: CancellationReason
 
 # Sum Type
 type Order = Annotated[
@@ -56,9 +66,9 @@ type Order = Annotated[
 | Required | Forbidden |
 |----------|-----------|
 | Separate type per state | One class with `status: str` field |
-| `kind: Literal["..."]` discriminator | `kind: Literal["..."] = "..."` default |
+| **Smart Enum for Kind** | **String Literal for Kind** |
 | Transition methods on source state | Standalone `def ship_order()` functions |
 | Structural proof (data exists only in valid states) | `Optional[tracking_id]` on all states |
 | `match/case` for handling | `if order.status == "shipped"` |
-| Smart Enums for simple states | Boolean flags `is_shipped`, `is_cancelled` |
-
+| **Pass Data (timestamp), not Services (Clock)** | **Injecting Clock/Service into Domain** |
+| **Value Objects (TrackingId)** | **Primitives (str)** |

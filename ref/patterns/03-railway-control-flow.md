@@ -1,143 +1,108 @@
-# Pattern 03: Control Flow (Railway Oriented Programming)
+# Pattern 03: Control Flow (Railway Oriented)
 
 ## The Principle
-Logic is a flow of data. Branching should be handled as a topology of tracks, not as a series of exceptions or jumps.
+We distinguish between **Structural Failures** (Invalid Data) and **Business Failures** (Valid Data, Invalid State).
+*   **Structural Failures** (e.g. negative money) must **Crash** (via Type Validation).
+*   **Business Failures** (e.g. insufficient funds) must **Return a Result** (via Railway Oriented Programming).
 
 ## The Mechanism
-Logic branches happen inside methods on models, explicitly guiding data onto a "Success Track" or a "Failure Track". Every logical branch must terminate in a return value; exceptions are strictly forbidden for domain logic.
+1.  **Smart Enums:** Define the possible outcomes explicitly.
+2.  **Result Types:** Domain functions return a Sum Type `Success | Failure`.
+3.  **No Logic Exceptions:** Domain logic never raises exceptions for business rules.
+4.  **No Defensive Coding:** Entities delegate rules to Value Objects.
 
 ---
 
-## 1. Exceptions are for System Failures, Not Logic
-Exceptions are "GOTO" statements that jump up the stack, bypassing type checks and breaking linearity.
+## 1. The Exception Tunnel (Anti-Pattern)
+Exceptions are invisible GOTO statements. They break control flow and force the caller to read implementation details to know what to catch.
 
-### ❌ Anti-Pattern: Business Logic as Exceptions
+### ❌ Anti-Pattern: Throwing for Logic
 ```python
-def withdraw(account: Account, amount: int) -> Account:
+def withdraw(account: Account, amount: int):
     if amount > account.balance:
-        raise InsufficientFundsException()  # ❌ Hidden control flow
-    return account.debit(amount)
+        raise ValueError("Insufficient funds")  # ❌ Hidden control flow
+    account.balance -= amount
 ```
 
-### ✅ Pattern: Explicit Result Types
-The return signature MUST tell the whole truth.
+---
 
+## 2. The Explicit Result
+The return signature tells the whole truth. Note that the **Entity** (Account) does not manually check the balance. It asks the **Value Object** (Money) to perform the subtraction.
+
+### ✅ Pattern: Explicit Outcomes with Smart Enums
 ```python
-from typing import Literal
-from pydantic import BaseModel
+from enum import StrEnum
+
+class WithdrawalResultKind(StrEnum):
+    SUCCESS = "success"
+    INSUFFICIENT_FUNDS = "insufficient_funds"
+
+class Money(BaseModel):
+    model_config = {"frozen": True}
+    cents: PositiveInt
+
+    def subtract(self, other: "Money") -> "Money | InsufficientFunds":
+        # Rule lives here
+        if other.cents > self.cents:
+            return InsufficientFunds(
+                kind=WithdrawalResultKind.INSUFFICIENT_FUNDS, 
+                current_balance=self, 
+                requested=other
+            )
+        return Money(cents=self.cents - other.cents)
 
 class WithdrawalSuccess(BaseModel):
     model_config = {"frozen": True}
-    kind: Literal["success"]  # NO DEFAULT
-    new_account_state: Account
-    amount_withdrawn: int
+    kind: Literal[WithdrawalResultKind.SUCCESS]
+    new_balance: Money
 
 class InsufficientFunds(BaseModel):
     model_config = {"frozen": True}
-    kind: Literal["insufficient_funds"]  # NO DEFAULT
-    current_balance: int
-    requested_amount: int
+    kind: Literal[WithdrawalResultKind.INSUFFICIENT_FUNDS]
+    current_balance: Money
+    requested: Money
 
 type WithdrawalResult = WithdrawalSuccess | InsufficientFunds
-```
 
----
-
-## 2. The Railway Switch (Branching)
-Logic branches are decision points. Withdraw is a method on Account that routes to success or failure.
-
-### ✅ Pattern: Decision Method on Aggregate
-```python
 class Account(BaseModel):
     model_config = {"frozen": True}
-    id: str
-    balance: int
+    balance: Money
     
-    def withdraw(self, amount: int) -> WithdrawalResult:
-        if amount > self.balance:
-            return InsufficientFunds(
-                kind="insufficient_funds",
-                current_balance=self.balance,
-                requested_amount=amount,
-            )
-        
-        new_state = Account(id=self.id, balance=self.balance - amount)
-        return WithdrawalSuccess(
-            kind="success",
-            new_account_state=new_state,
-            amount_withdrawn=amount,
-        )
+    def withdraw(self, amount: Money) -> WithdrawalResult:
+        # Delegate to the Type. No manual 'if' guards.
+        match self.balance.subtract(amount):
+            case InsufficientFunds() as f:
+                return f
+            case Money() as new_balance:
+                return WithdrawalSuccess(kind=WithdrawalResultKind.SUCCESS, new_balance=new_balance)
 ```
 
 ---
 
-## 3. Explicit Fall-through (No Implicit None)
-"Do nothing" must be an explicit value, not `None`.
+## 3. The NoOp (Doing Nothing)
+Sometimes the correct decision is to do nothing. Return an explicit `NoOp` or `Skipped` type, never `None`.
 
-### ❌ Anti-Pattern: Returning None
+### ✅ Pattern: Explicit NoOp
 ```python
-def process_refund(order: Order):
-    if not order.is_refundable:
-        return None  # ❌ Ambiguous
-```
+class PaymentResultKind(StrEnum):
+    SKIPPED = "skipped"
+    PROCESSED = "processed"
 
-### ✅ Pattern: The NoOp Result
-```python
-class RefundProcessed(BaseModel):
+class PaymentSkipped(BaseModel):
     model_config = {"frozen": True}
-    kind: Literal["processed"]  # NO DEFAULT
-    refund_id: str
+    kind: Literal[PaymentResultKind.SKIPPED]
+    reason: SkippedReason
 
-class RefundSkipped(BaseModel):
-    model_config = {"frozen": True}
-    kind: Literal["skipped"]  # NO DEFAULT
-    reason: str
-
-type RefundResult = RefundProcessed | RefundSkipped
-
-
-class RefundableOrder(BaseModel):
-    """Order that can be refunded."""
-    model_config = {"frozen": True}
-    id: str
-    is_refundable: bool
-    
-    def process_refund(self) -> RefundResult:
-        if not self.is_refundable:
-            return RefundSkipped(kind="skipped", reason="Order outside refund window")
-        
-        return RefundProcessed(kind="processed", refund_id=f"refund-{self.id}")
-```
-
----
-
-## 4. Handling the Tracks (Pattern Matching)
-The caller MUST handle both tracks. Handler is a model with coordination method.
-
-### ✅ Pattern: Handler Model
-```python
-class WithdrawalHandler(BaseModel):
-    """Handler for withdrawal requests."""
-    model_config = {"frozen": True}
-    
-    def handle(self, account: Account, amount: int) -> WithdrawalResult:
-        result = account.withdraw(amount)
-        
-        match result:
-            case WithdrawalSuccess(new_account_state=state):
-                # Caller handles persistence
-                return result
-            
-            case InsufficientFunds():
-                # Caller handles error display
-                return result
+type PaymentResult = PaymentProcessed | PaymentSkipped
 ```
 
 ---
 
 ## Cognitive Checks
-- [ ] **Truthful Signature:** Does the return type include the failure cases?
-- [ ] **No Raises:** Did I grep for `raise`? (Only allowed for system panics)
-- [ ] **No None:** Did I grep for `return None`? Use `Skipped` or `NoOp` instead
-- [ ] **No Defaults on kind:** Is every `kind: Literal[...]` explicit?
-- [ ] **Methods on Models:** Is decision logic a method on an aggregate, not a standalone function?
+- [ ] **No Raises:** Did I remove `raise` statements?
+- [ ] **Smart Enums:** Am I using `StrEnum` for `kind`?
+- [ ] **Explicit Return Type:** Is the return type a Union of models?
+- [ ] **No Implicit None:** Did I remove `return None`?
+- [ ] **No Defensive Ifs:** Did I delegate the rule to the Value Object?
+- [ ] **Method on Model:** Is the logic on the Aggregate/Value Object, not a standalone function?
+- [ ] **Value Objects:** Am I using `Money`, not `int`? `SkippedReason`, not `str`?

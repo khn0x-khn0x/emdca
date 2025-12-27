@@ -1,136 +1,93 @@
-# Pattern 07: Translation (The Anti-Corruption Layer)
+# Pattern 07: Translation (ACL / Foreign Models)
 
 ## The Principle
-The outside world speaks a chaotic language; the Domain speaks a strict language. We must explicitly model both the **Foreign Reality** (external systems) and the **Internal Truth** (business concepts). Translation is the act of naturalizing the foreign into the internal.
+The system interacts with many "Foreign Realities" (Database, External APIs, User Input). We never allow these foreign shapes to leak into our Domain. We use an **Anti-Corruption Layer (ACL)** pattern implemented via **Foreign Models**.
 
 ## The Mechanism
-**Foreign Models** are frozen Pydantic models that mirror external schemas using declarative mapping. They live in the Domain (`domain/trade/coinbase.py`) because knowing the external shape is domain knowledge. They own the method `.to_domain()` to convert themselves into the Internal Truth.
+1.  **Foreign Models:** Pydantic models that mirror the external schema *exactly*.
+2.  **Mapping:** Fields use `Field(alias=...)` to map foreign names to internal names.
+3.  **Translation:** Foreign Models own a `.to_domain()` method that constructs the "Internal Truth" (Domain Model).
 
 ---
 
-## 1. The Raw Data Infection (Anti-Pattern)
-Allowing external data structures (JSON dicts, API payloads) to permeate business logic creates a dependency on external naming conventions.
+## 1. The Dict Passing (Anti-Pattern)
+Passing raw dictionaries or unstructured data deeper than the entry point couples the core to the edge.
 
-### ❌ Anti-Pattern: Dict Passing
+### ❌ Anti-Pattern: Raw Data
 ```python
-def calculate_tax(order_data: dict):
-    return order_data['price'] * 0.2  # ❌ Breaks if API changes 'price' to 'unit_amount'
+def process_webhook(payload: dict):
+    if payload.get("status") == "ok":  # ❌ Coupling to string literal
+        pass
 ```
 
 ---
 
-## 2. The Foreign Model (Reality)
-We model the external system's reality explicitly. This is a precise definition of the foreign schema. We use Pydantic's aliasing to handle the friction declaratively.
+## 2. The Foreign Model
+We model the incoming data exactly as it is, but with strong types.
 
-### ✅ Pattern: Declarative Mapping (REST API)
+### ✅ Pattern: Declarative Mapping
 ```python
-from pydantic import BaseModel, Field
-
 class CoinbaseCandle(BaseModel):
-    """Foreign Model: Coinbase API response shape."""
+    """Mirrors the Coinbase API response."""
     model_config = {"frozen": True}
     
-    # Field(alias=...) maps foreign reality to readable internal names
-    time: int = Field(alias="t")
-    open: float = Field(alias="o")
-    high: float = Field(alias="h")
-    low: float = Field(alias="l")
-    close: float = Field(alias="c")
-    volume: float = Field(alias="v")
-```
-
-### ✅ Pattern: Declarative Mapping (LLM API)
-The LLM is just another foreign system. We model its output as a Foreign Model.
-
-```python
-from typing import Literal
-
-class GptSentimentResponse(BaseModel):
-    """Foreign Model: LLM response shape."""
-    model_config = {"frozen": True}
+    # Field(alias=...) maps foreign names to readable internal names
+    time: UnixTimestamp = Field(alias="t")
+    open: Price = Field(alias="o")
+    high: Price = Field(alias="h")
     
-    sentiment_label: str = Field(alias="label") 
-    confidence_score: float = Field(alias="probability")
-
-    def to_domain(self) -> "SentimentDecision":
-        kind = "positive" if "pos" in self.sentiment_label.lower() else "negative"
-        return SentimentDecision(kind=kind, score=self.confidence_score)
-```
-
----
-
-## 3. Declarative Translation (Self-Naturalization)
-The Foreign Model knows how to naturalize itself into the Internal Truth. Translation logic is co-located with the schema definition.
-
-### ✅ Pattern: The `.to_domain()` Method
-```python
-from datetime import datetime, timezone
-
-# Internal Truth
-class SentimentDecision(BaseModel):
-    model_config = {"frozen": True}
-    kind: Literal["positive", "negative"]
-    score: float
-
-
-class CoinbaseCandle(BaseModel):
-    """Foreign Model with translation."""
-    model_config = {"frozen": True}
-    
-    time: int = Field(alias="t")
-    # ... other fields ...
-
     def to_domain(self) -> Candle:
         return Candle(
             timestamp=datetime.fromtimestamp(self.time, tz=timezone.utc),
-            open=Price(self.open),
-            high=Price(self.high),
-            low=Price(self.low),
-            close=Price(self.close),
-            volume=Volume(self.volume),
+            open=self.open,
+            high=self.high,
         )
-```
-
-### 💡 The Inverse: Intent Outcome Mapping
-
-The `.to_domain()` pattern handles **inbound** translation (Foreign → Internal).
-
-For **outbound** translation (Execution Result → Domain Result), the same principle applies but lives on the **Intent**:
-
-```python
-class PublishIntent(BaseModel):
-    """Intent owns outbound translation."""
-    model_config = {"frozen": True}
-    
-    stream: str
-    payload: bytes
-    
-    def on_success(self, ack: NatsAck) -> EventPublished:
-        """Outbound translation: Foreign Result → Internal Truth."""
-        return EventPublished(sequence=ack.seq, stream=self.stream)
 ```
 
 ---
 
-## 4. The Border (Where Translation Happens)
-The Shell receives data, validates against the Foreign Model, and immediately converts to Domain.
+## 3. The Translation Chain
+Data flows in one direction: `Raw -> Foreign -> Domain`.
 
-### ✅ Pattern: Validate then Naturalize
+### ✅ Pattern: The Chain
 ```python
-# api/market.py (The Border—composition root equivalent)
-@router.post("/candles")
-def ingest_candles(payload: list[CandleRequest]):
-    # 1. Reality Check (FastAPI validates automatically)
-    # 2. Naturalize
-    domain_candles = [fc.to_domain() for fc in payload]
-    # 3. Pass Truth to Logic
-    market_strategy.analyze(domain_candles)
+# 1. Parse Raw JSON into Foreign Model
+# If JSON is missing fields, Pydantic raises ValidationError (Crash). Correct.
+foreign = CoinbaseCandle.model_validate_json(raw_json)
+
+# 2. Translate to Domain
+candle = foreign.to_domain()
+```
+
+---
+
+## 4. LLM Responses
+LLM outputs are chaotic "Foreign Reality." We parse them into strict Foreign Models before trusting them.
+
+### ✅ Pattern: LLM Translation
+```python
+class GptSentimentResponse(BaseModel):
+    model_config = {"frozen": True}
+    
+    sentiment_label: RawLabel = Field(alias="label")
+    confidence_score: Probability = Field(alias="probability")
+    
+    def to_domain(self) -> SentimentDecision:
+        if "pos" in self.sentiment_label.lower():
+            return SentimentDecision(kind=SentimentKind.POSITIVE, score=self.confidence_score)
+        if "neg" in self.sentiment_label.lower():
+            return SentimentDecision(kind=SentimentKind.NEGATIVE, score=self.confidence_score)
+            
+        # Structural Violation: The AI gave us garbage. Crash.
+        raise ValueError(f"AI returned invalid label: {self.sentiment_label}")
 ```
 
 ---
 
 ## Cognitive Checks
-- [ ] **Frozen:** Does every model have `model_config = {"frozen": True}`?
-- [ ] **Co-location:** Does the Foreign Model live in the same Context as the Domain Model?
-- [ ] **Declarative Mapping:** Do I use `Field(alias=...)` instead of manual assignment?
-- [ ] **One-Way Dependency:** Does Foreign Model import Internal Truth, never the reverse?
+- [ ] **Exact Mirror:** Does the Foreign Model match the external schema 1:1?
+- [ ] **Aliases:** Are `Field(alias=...)` used for renaming, not manual code?
+- [ ] **One-Way Street:** Does Foreign import Domain (allowed), but Domain never imports Foreign?
+- [ ] **Method Location:** Is `.to_domain()` defined on the Foreign Model?
+- [ ] **No Silencing:** Does unknown data cause a Crash/Exception?
+- [ ] **Typed Fields:** Am I using `Price`, `Probability` instead of `float`?

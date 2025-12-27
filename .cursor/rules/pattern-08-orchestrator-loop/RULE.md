@@ -9,62 +9,51 @@ alwaysApply: false
 ## Valid Code Structure
 
 ```python
-# Result Types
-class PaymentNotFound(BaseModel):
-    model_config = {"frozen": True}
-    kind: Literal["not_found"]  # NO DEFAULT
-    payment_id: str
+# Result Types (Smart Enum)
+class PaymentResultKind(StrEnum):
+    NOT_FOUND = "not_found"
+    PROCESSED = "processed"
+    VERIFICATION_REQUIRED = "verification_required"
 
-class PaymentProcessed(BaseModel):
-    model_config = {"frozen": True}
-    kind: Literal["processed"]  # NO DEFAULT
-    payment_id: str
-
-class VerificationRequired(BaseModel):
-    model_config = {"frozen": True}
-    kind: Literal["verification_required"]  # NO DEFAULT
-    reason: str
-
-type ProcessPaymentResult = PaymentNotFound | PaymentProcessed | VerificationRequired
-
-# Orchestrator: Frozen model with dependencies as fields
-class PaymentOrchestrator(BaseModel):
-    model_config = {"frozen": True}
+# The Runtime: Smart Domain Model (Active Orchestrator)
+class PaymentRuntime(BaseModel):
+    """
+    Active Domain Model.
+    Drives the process by coordinating other Smart Models.
+    Lives in the Domain.
+    """
+    model_config = {"frozen": True, "arbitrary_types_allowed": True}
     
-    store: PaymentStore       # Injected dependency
-    gateway: PaymentGateway   # Injected dependency
-    
-    def process(self, payment_id: str, db: Session) -> ProcessPaymentResult:
-        # 1. Fetch (via injected store)
-        fetch_result = self.store.fetch(payment_id, db)
+    # Injected Smart Capabilities
+    store: PaymentStore
+    gateway: PaymentGateway
+
+    async def run(self, payment_id: PaymentId, event: PaymentEvent) -> ProcessPaymentResult:
+        # 1. Load State (Active Store)
+        state = await self.store.load(payment_id)
+        if not state:
+            return PaymentNotFound(kind=PaymentResultKind.NOT_FOUND, payment_id=payment_id)
+
+        # 2. Pure Step (Domain Logic)
+        new_state, intent = state.handle(event)
+
+        # 3. Save State (Active Store)
+        await self.store.save(payment_id, new_state)
+
+        # 4. Execute Intent (Active Gateway)
+        await self.gateway.execute(intent)
         
-        match fetch_result:
-            case PaymentNotFound():
-                return fetch_result
-            
-            case PaymentFound(payment=payment):
-                # 2. Decide (Pure Domain—method on aggregate)
-                intent = payment.decide_action()
-                
-                # 3. Act (via injected dependencies)
-                match intent:
-                    case ProcessIntent(new_state=s):
-                        self.gateway.charge(s.amount)
-                        self.store.save(s, db)
-                        return PaymentProcessed(kind="processed", payment_id=payment_id)
-                    
-                    case RequireVerificationIntent(reason=r):
-                        return VerificationRequired(kind="verification_required", reason=r)
+        return PaymentProcessed(kind=PaymentResultKind.PROCESSED, payment_id=payment_id)
 ```
 
 ## Constraints
 
 | Required | Forbidden |
 |----------|-----------|
-| Orchestrator is frozen `BaseModel` | Standalone `def process_payment()` functions |
-| Dependencies as fields (stores, gateways) | Stateless orchestrator with no fields |
-| Dumb piping: Fetch → Translate → Decide → Act | `if payment.amount > 10000` (business logic) |
+| **Runtime is a Domain Model** | **Runtime is a Service Class** |
+| Logic delegated to Domain `state.handle()` | Logic inside `run()` |
+| **Reactive Loop Pattern** | **Procedural Script Pattern** |
+| Injected Capabilities (`store`) | Implicit Globals |
 | `match/case` for flow control | `raise` for control flow |
-| Decision logic in domain aggregates | Decision logic in orchestrator |
-| Return Sum Types | `return None` or implicit returns |
-
+| **Smart Enums for Result Kinds** | **Magic Strings for Result Kinds** |
+| **Typed IDs (PaymentId)** | **String IDs (str)** |

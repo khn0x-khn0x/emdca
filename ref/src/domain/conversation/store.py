@@ -1,57 +1,33 @@
 """
-THE STORE (Database Executor)
+THE ACTIVE CAPABILITY (Store)
 
-Role: Frozen Pydantic model that handles DB I/O and returns Sum Types.
-Mandate: Mandate VI (Storage) & VII (Translation).
+Role: Encapsulates Infrastructure Clients and Logic.
+Mandate: Mandate VI (Storage) & X (Infrastructure).
 Pattern: ref/patterns/06-storage-foreign-reality.md
+Pattern: ref/patterns/10-infrastructure-capability-as-data.md
 
 Constraint:
-- Store is a frozen Pydantic model with DB connection as field.
-- Methods return Sum Types (Found | NotFound, Saved | SaveFailed).
-- Uses Foreign Models for raw DB shapes.
-- Owns translation: raw -> foreign -> domain.
+- Frozen Pydantic Model.
+- Holds the Client (injected).
+- Executes the Logic (load/save/publish).
 
 Example Implementation:
 ```python
-from pydantic import BaseModel
-from typing import Literal
-
-# Foreign Model (mirrors DB shape)
-class DbConversation(BaseModel):
-    model_config = {"frozen": True}
-    id: str
-    status: str
-
-    def to_domain(self) -> "Conversation":
-        match self.status:
-            case "active":
-                return Active(kind="active", conversation_id=self.id)
-            case "archived":
-                return Archived(kind="archived", conversation_id=self.id, reason="")
-
-# Result Sum Types
-class ConversationFound(BaseModel):
-    model_config = {"frozen": True}
-    kind: Literal["found"]
-    conversation: Conversation
-
-class ConversationNotFound(BaseModel):
-    model_config = {"frozen": True}
-    kind: Literal["not_found"]
-    conversation_id: str
-
-type FetchResult = ConversationFound | ConversationNotFound
-
-# Store Executor (dependencies as fields)
 class ConversationStore(BaseModel):
-    model_config = {"frozen": True}
-    db: DatabaseConnection  # Injected dependency
+    model_config = {"frozen": True, "arbitrary_types_allowed": True}
 
-    async def fetch(self, conversation_id: str) -> FetchResult:
-        row = await self.db.fetchone("SELECT ...", conversation_id)
-        if row is None:
-            return ConversationNotFound(kind="not_found", conversation_id=conversation_id)
-        foreign = DbConversation.model_validate(row)
-        return ConversationFound(kind="found", conversation=foreign.to_domain())
+    # Configuration
+    table_name: TableName
+
+    # Injected Capability
+    db: DatabaseClient
+
+    async def load(self, id: ConversationId) -> Conversation:
+        # Use client to fetch foreign model
+        row = await self.db.fetch(self.table_name, id)
+        if not row:
+            return ConversationNotFound(id=id)
+        # Translate to Domain
+        return DbConversation.model_validate(row).to_domain()
 ```
 """

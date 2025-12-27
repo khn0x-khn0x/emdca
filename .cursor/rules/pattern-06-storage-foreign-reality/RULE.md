@@ -1,6 +1,6 @@
 ---
 description: "Pattern 06: Storage — Database as Foreign Reality with explicit translation."
-globs: ["**/store.py", "**/domain/**/*.py"]
+globs: ["**/domain/**/*.py", "**/service/**/*.py"]
 alwaysApply: false
 ---
 
@@ -9,57 +9,66 @@ alwaysApply: false
 ## Valid Code Structure
 
 ```python
+# Smart Enum
+class StorageResultKind(StrEnum):
+    FOUND = "found"
+    NOT_FOUND = "not_found"
+
 # Foreign Model: Represents the database row shape
 class DbOrder(BaseModel):
     model_config = {"frozen": True}
     
-    id: str
-    status: str
-    amount_cents: int
+    id: OrderId
+    status: OrderStatus
+    amount_cents: PositiveInt
     
     def to_domain(self) -> Order:
         return Order(
-            id=OrderId(self.id),
-            status=OrderStatus(self.status),
+            id=self.id,
+            status=self.status,
             amount=Money.from_cents(self.amount_cents),
         )
 
 # Query Result: Explicit Sum Type
 class OrderFound(BaseModel):
     model_config = {"frozen": True}
-    kind: Literal["found"]  # NO DEFAULT
+    kind: Literal[StorageResultKind.FOUND]  # NO DEFAULT
     order: Order
 
 class OrderNotFound(BaseModel):
     model_config = {"frozen": True}
-    kind: Literal["not_found"]  # NO DEFAULT
-    order_id: str
+    kind: Literal[StorageResultKind.NOT_FOUND]  # NO DEFAULT
+    order_id: OrderId
 
 type FetchOrderResult = OrderFound | OrderNotFound
 
-# Store: Frozen model that handles DB I/O
+# The Store: Active Domain Model (Capability)
 class OrderStore(BaseModel):
-    model_config = {"frozen": True}
+    """
+    Active Capability. Encapsulates the Database Client.
+    Lives in the Domain (Schema + Logic).
+    """
+    model_config = {"frozen": True, "arbitrary_types_allowed": True}
     
-    async def fetch(self, order_id: str, db: AsyncSession) -> FetchOrderResult:
-        result = await db.execute(select(orders_table).where(id=order_id))
-        row = result.first()
+    # Injected Tool (Client)
+    db: Any 
+    table_name: TableName
+    
+    async def load(self, order_id: OrderId) -> FetchOrderResult:
+        # The Domain Model executes the query via the Tool.
+        # "The thing is the thing."
+        row = await self.db.fetch_one(
+            select(self.table_name).where(id=order_id)
+        )
         
+        # Translation
         if not row:
-            return OrderNotFound(kind="not_found", order_id=order_id)
-        
-        db_order = DbOrder.model_validate(row)
-        return OrderFound(kind="found", order=db_order.to_domain())
-
-# Orchestrator: Store injected as field
-class OrderProcessor(BaseModel):
-    model_config = {"frozen": True}
-    
-    store: OrderStore  # Injected dependency
-    
-    async def process(self, order_id: str, db: AsyncSession) -> ProcessResult:
-        fetch_result = await self.store.fetch(order_id, db)
-        # ... pattern match on result
+            return OrderNotFound(kind=StorageResultKind.NOT_FOUND, order_id=order_id)
+            
+        return OrderFound(
+            kind=StorageResultKind.FOUND, 
+            order=DbOrder.model_validate(row).to_domain()
+        )
 ```
 
 ## Constraints
@@ -68,7 +77,8 @@ class OrderProcessor(BaseModel):
 |----------|-----------|
 | `DbModel` with `.to_domain()` method | Repository pattern with abstract interface |
 | `Found \| NotFound` Sum Type | `return None` for not found |
-| Store as frozen `BaseModel` | Standalone query functions |
-| Store injected as field into orchestrator | Direct DB access in domain |
+| **Store is a Domain Model** | **Store is a Service Class** |
+| **Capability (DB) Injected into Store** | **Global DB Access** |
 | `DbOrder.model_validate(row).to_domain()` | Raw dict passing |
-
+| **Typed IDs (OrderId)** | **String IDs (str)** |
+| **Smart Enums for Kinds** | **String Literals for Kinds** |

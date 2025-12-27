@@ -1,24 +1,25 @@
 """
-THE INTERNAL TRUTH (AppConfig)
+THE DOMAIN CONFIGURATION (Schema of Environment)
 
-Role: Defines the structured, type-safe configuration for the application.
+Role: Defines the contract with the environment.
 Mandate: Mandate V (Configuration).
 Pattern: ref/patterns/05-config-injection.md
 
 Constraint:
-- Must be frozen (immutable).
-- No default values (defaults belong in Env/Shell).
-- No knowledge of os.environ.
+- Inherit `BaseSettings` (pydantic-settings).
+- Lives in Domain because schema is Domain Knowledge.
+- Use `Field(alias=...)` for mapping.
+- Crash on instantiation if invalid.
 
 Example Implementation:
 ```python
-from pydantic import BaseModel, HttpUrl
+from pydantic import Field, PostgresDsn
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-class AppConfig(BaseModel):
-    model_config = {"frozen": True}
-    nats_url: HttpUrl
-    redis_url: HttpUrl
-    debug_mode: bool
-    # No defaults — caller must provide all values
+class AppConfig(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", frozen=True)
+
+    database_url: PostgresDsn = Field(alias="DATABASE_URL")
+    api_key: ApiKey = Field(alias="STRIPE_API_KEY")
 ```
 """

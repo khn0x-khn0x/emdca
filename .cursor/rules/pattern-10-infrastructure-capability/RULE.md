@@ -9,51 +9,48 @@ alwaysApply: false
 ## Valid Code Structure
 
 ```python
-# DOMAIN: Abstract capability (what we need)
-# domain/event/store.py
+# DOMAIN: Active Capability Model (Holds Client)
 class EventStore(BaseModel):
-    """Abstract capability: I need event persistence."""
-    model_config = {"frozen": True}
+    """
+    Active Domain Model.
+    Encapsulates the Infrastructure Client and Logic.
+    """
+    model_config = {"frozen": True, "arbitrary_types_allowed": True}
     
-    async def append(self, event: Event) -> AppendResult: ...
-    async def read(self, stream: str) -> ReadResult: ...
+    # Configuration
+    topic_name: TopicName
+    
+    # Injected Tool (Client)
+    client: NatsClient
 
-# DOMAIN: Abstract failure modes
-# domain/event/failure.py
-class EventStoreFailure(StrEnum):
-    """How operations can fail (abstract, not tech-specific)."""
-    TIMEOUT = "timeout"
-    CONNECTION_LOST = "connection_lost"
-    NOT_FOUND = "not_found"
-    PERMISSION_DENIED = "permission_denied"
-
-# SERVICE: Technology binding (how we provide it)
-# service/event.py
-class NatsStreamConfig(BaseModel):
-    """What NATS expects. Service-layer knowledge."""
-    model_config = {"frozen": True}
-    
-    name: str  # NO DEFAULT
-    subjects: tuple[str, ...]  # NO DEFAULT
-    retention: Literal["limits", "interest", "workqueue"]  # NO DEFAULT
-
-class NatsEventExecutor(BaseModel):
-    """Binds abstract EventStore to NATS."""
-    model_config = {"frozen": True}
-    
-    config: NatsStreamConfig
-    
-    async def execute(self, intent: EventIntent) -> EventStoreFailure | EventResult:
-        # Map NATS exceptions to abstract domain failures
-        ...
+    async def publish(self, event: DomainEvent) -> EventResult:
+        """
+        The Domain Model executes the capability.
+        "The thing is the thing."
+        """
+        # Direct Execution (No defensive try/catch for structural failure)
+        # If NATS is down, let it crash or handle at higher level.
+        # If we need Railway result for "Network Error", we handle it here.
+        
+        try:
+            await self.client.publish(
+                self.topic_name, 
+                event.model_dump_json()
+            )
+            return EventStored(kind=EventResultKind.STORED)
+        except NatsError:
+            # Expected Business Failure (Network) -> Result
+            return EventFailed(kind=EventResultKind.FAILED)
 ```
 
 ## Constraints
 
 | Required | Forbidden |
 |----------|-----------|
-| Domain declares abstract capabilities | `import boto3` / `import nats` in domain |
+| **Capability is an Injected Model** | **Capability is an Interface/Protocol** |
+| **Model holds the Client** | **Model holds only Config (Passive)** |
+| **Model executes Logic** | **Service executes Logic (Anemic)** |
+| **Direct Construction/Casting** | **Manual Mapper Functions** |
 | Failure modes as abstract `StrEnum` | Technology-specific configs in domain |
-| Service layer owns tech configs | `NatsStreamConfig` in `domain/` |
-| Service layer binds abstract to concrete | `domain/infra/` directory |
 | All fields explicit, no defaults | Side effects on model init |
+| **Real Clients (or Test Doubles)** | **Mocks** |

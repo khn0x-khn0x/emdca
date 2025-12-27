@@ -1,27 +1,30 @@
 # Pattern 06: Storage (Foreign Reality)
 
 ## The Principle
-The Database is just another External System. It is a **Foreign Reality** that must be explicitly modeled and translated, just like a 3rd-party API. The Domain does not define "Repositories"; it defines **Foreign Models** representing the stored data shape.
+The Database is just another External System. It is a **Foreign Reality** that must be explicitly modeled and translated.
+In EMDCA, the **Store** is not a "Repository Service"; it is a **Smart Domain Model** (Capability) that encapsulates the database connection and the logic to use it.
 
 ## The Mechanism
-1.  **Foreign Models (Schema):** The Domain defines `DbOrder` (Pydantic) representing the SQL table structure.
-2.  **Self-Translation:** `DbOrder` knows how to convert itself into `Order` (Internal Truth).
-3.  **Orchestrator Execution:** The Orchestrator executes the query, validates into `DbOrder`, and translates to `Order`.
+1.  **Foreign Models (Schema):** `DbOrder` defines the SQL shape.
+2.  **Capability (The Store):** `OrderStore` is a Domain Model that holds the DB Client.
+3.  **Active Execution:** `OrderStore.load()` uses the client to fetch data and translate it.
 
 ---
 
 ## 1. The Repository Abstraction (Anti-Pattern)
-Traditional "Repository Patterns" hide translation logic, coupling the Domain to an interface that mimics a collection.
+Traditional "Repository Patterns" hide translation logic behind interfaces, separating the "Definition" of storage from the "Act" of storage.
 
-### ❌ Anti-Pattern: The Magic Repo
+### ❌ Anti-Pattern: Service-Based Repository
 ```python
-order = repo.get(order_id)  # ❌ Hidden translation, hidden query
+# Service Class
+class OrderRepository:
+    def get(self, id): ... 
 ```
 
 ---
 
 ## 2. The Foreign Model (The Database Schema)
-We model the database row explicitly. This lives in the Domain because knowing the persistence shape is Domain Knowledge.
+We model the database row explicitly.
 
 ### ✅ Pattern: The DB Model
 ```python
@@ -31,14 +34,14 @@ class DbOrder(BaseModel):
     """Foreign Model: Represents the 'orders' table."""
     model_config = {"frozen": True}
     
-    id: str
-    status: str
+    id: OrderId
+    status: OrderStatus
     amount_cents: int
     
     def to_domain(self) -> Order:
         return Order(
-            id=OrderId(self.id),
-            status=OrderStatus(self.status),
+            id=self.id,
+            status=self.status,
             amount=Money.from_cents(self.amount_cents),
         )
 ```
@@ -50,91 +53,95 @@ Model the query result explicitly—found or not found.
 
 ### ✅ Pattern: Explicit Result
 ```python
-from typing import Literal
+from enum import StrEnum
+
+class StorageResultKind(StrEnum):
+    FOUND = "found"
+    NOT_FOUND = "not_found"
 
 class OrderFound(BaseModel):
     model_config = {"frozen": True}
-    kind: Literal["found"]
+    kind: Literal[StorageResultKind.FOUND]
     order: Order
 
 class OrderNotFound(BaseModel):
     model_config = {"frozen": True}
-    kind: Literal["not_found"]
-    order_id: str
+    kind: Literal[StorageResultKind.NOT_FOUND]
+    order_id: OrderId
 
 type FetchOrderResult = OrderFound | OrderNotFound
 ```
 
 ---
 
-## 4. The Store Executor
-The Store is a frozen Pydantic model that handles DB I/O. It's injected into orchestrators.
+## 4. The Store Capability (Active Model)
 
-### ✅ Pattern: Store as Executor
+The "Store" is an Active Domain Model. It holds the DB Client.
+
+### ✅ Pattern: Active Store
 ```python
 class OrderStore(BaseModel):
-    """Executor for order persistence. Injected into orchestrators."""
-    model_config = {"frozen": True}
+    """Active Domain Model. Holds Data (Config) and Capability (Client)."""
+    model_config = {"frozen": True, "arbitrary_types_allowed": True}
     
-    async def fetch(self, order_id: str, db: AsyncSession) -> FetchOrderResult:
-        result = await db.execute(select(orders_table).where(id=order_id))
-        row = result.first()
+    # Injected Capability
+    db: Any
+    table_name: TableName
+    
+    async def load(self, order_id: OrderId) -> FetchOrderResult:
+        # 1. Raw I/O (Using Injected Capability)
+        row = await self.db.fetch_one(
+            select(self.table_name).where(id=order_id)
+        )
         
+        # 2. Pure Translation
         if not row:
-            return OrderNotFound(kind="not_found", order_id=order_id)
-        
-        db_order = DbOrder.model_validate(row)
-        order = db_order.to_domain()
-        return OrderFound(kind="found", order=order)
-    
-    async def save_status(self, order_id: str, status: OrderStatus, db: AsyncSession) -> None:
-        await db.execute(
-            orders_table.update()
-            .where(id=order_id)
-            .values(status=status.value)
+            return OrderNotFound(kind=StorageResultKind.NOT_FOUND, order_id=order_id)
+            
+        return OrderFound(
+            kind=StorageResultKind.FOUND, 
+            order=DbOrder.model_validate(row).to_domain()
         )
 ```
 
 ---
 
-## 5. The Orchestrator (Pydantic Model)
-The Orchestrator declares its dependencies as fields. Application-scoped dependencies are injected; request-scoped resources (like `db`) are passed as arguments.
+## 5. The Usage (Orchestration)
 
-### ✅ Pattern: Dependencies as Fields
+The Orchestrator (Runtime) holds the Store Model.
+
+### ✅ Pattern: Active Orchestration
 ```python
-class OrderProcessor(BaseModel):
-    """Orchestrator with injected store."""
+class OrderRuntime(BaseModel):
+    """Active Runtime Model."""
     model_config = {"frozen": True}
     
-    store: OrderStore  # Injected dependency
+    store: OrderStore
     
-    async def process(self, order_id: str, db: AsyncSession) -> ProcessResult:
-        fetch_result = await self.store.fetch(order_id, db)
+    async def process(self, order_id: OrderId) -> ProcessResult:
+        # The Store is Active. We just ask it to load.
+        fetch_result = await self.store.load(order_id)
         
         match fetch_result:
-            case OrderNotFound():
-                return fetch_result
-            
             case OrderFound(order=order):
-                intent = order.mark_shipped()
-                await self.store.save_status(order_id, intent.new_status, db)
-                return OrderProcessed(kind="processed", order_id=order_id)
+                return ProcessSuccess(order=order)
+            case OrderNotFound():
+                return ProcessFailure("Not Found")
 ```
 
 ---
 
-## 6. Why No Repository Class?
-By removing the Repository Class:
-1.  **Visible I/O:** You see exactly what query runs.
-2.  **Explicit Translation:** The `.to_domain()` proves boundary crossing.
-3.  **No Mocking:** Test Logic with `Order` objects directly.
+## 6. Why No Repository Interface?
+By making the Store a Model:
+1.  **Co-location:** The definition of "How to load an order" lives with the Order concept.
+2.  **Explicit Context:** The DB Client is passed in `__init__`.
+3.  **Unified Semantics:** Everything is a Model.
 
 ---
 
 ## Cognitive Checks
-- [ ] **Schema in Domain:** Does `domain/context/store.py` exist with Pydantic models?
-- [ ] **No SQL in Domain:** The Domain defines the shape, never imports `sqlalchemy`.
+- [ ] **Store is Model:** Is `OrderStore` a Pydantic Model?
+- [ ] **Capability Injected:** Does it hold `db` as a field?
+- [ ] **No Service Classes:** Did I remove `OrderRepository` class?
 - [ ] **Explicit Translation:** Does it read `DbOrder.model_validate(row).to_domain()`?
-- [ ] **No Implicit None:** Is "not found" an explicit `OrderNotFound` type?
-- [ ] **Store as Executor:** Is the store a `BaseModel` with I/O methods?
-- [ ] **Dependencies as Fields:** Does the orchestrator have `store: OrderStore` as a field?
+- [ ] **Smart Enums:** Am I using `StorageResultKind`?

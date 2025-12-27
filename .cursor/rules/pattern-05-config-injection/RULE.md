@@ -1,5 +1,5 @@
 ---
-description: "Pattern 05: Configuration — EnvVars as Foreign Reality, AppConfig as Internal Truth."
+description: "Pattern 05: Configuration — AppConfig as Single Source of Truth using Pydantic Settings."
 globs: ["**/config.py", "**/env.py", "**/main.py", "**/system/**/*.py"]
 alwaysApply: false
 ---
@@ -9,58 +9,40 @@ alwaysApply: false
 ## Valid Code Structure
 
 ```python
-# Foreign Reality: Models the OS environment
-class EnvVars(BaseModel):
-    model_config = {"frozen": True}
+from pydantic import Field, PostgresDsn
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# The Domain Config IS the Environment Schema.
+# This lives in domain/system/config.py
+class AppConfig(BaseSettings):
+    """
+    The Single Source of Truth for Configuration.
+    Defines the contract between the App and the Environment.
+    """
+    model_config = SettingsConfigDict(env_file=".env", frozen=True)
     
-    db_url: str = Field(alias="DATABASE_URL")  # NO DEFAULT
-    debug_mode: str = Field(alias="DEBUG")  # NO DEFAULT
-    api_key: str = Field(alias="STRIPE_API_KEY")  # NO DEFAULT
+    # Declarative Mapping: Domain Name <- Environment Name
+    # Uses Typed Fields (PostgresDsn, ApiKey) NOT strings
+    database_url: PostgresDsn = Field(alias="DATABASE_URL")
+    stripe_key: ApiKey = Field(alias="STRIPE_API_KEY")
+    debug_mode: bool = Field(default=False, alias="DEBUG")
+
+# Usage in Composition Root
+def main():
+    # 1. Load & Validate (Crash if missing)
+    config = AppConfig()
     
-    def to_domain(self) -> "AppConfig":
-        return AppConfig(
-            database=DatabaseConfig(connection_string=self.db_url),
-            is_debug=self.debug_mode.lower() == "true",
-            stripe_key=self.api_key,
-        )
-
-# Internal Truth: Pure domain config
-class AppConfig(BaseModel):
-    model_config = {"frozen": True}
-    
-    database: DatabaseConfig  # NO DEFAULT
-    is_debug: bool  # NO DEFAULT
-    stripe_key: str  # NO DEFAULT
-
-# Config Result: Sum Type
-class ConfigLoaded(BaseModel):
-    model_config = {"frozen": True}
-    kind: Literal["loaded"]
-    config: AppConfig
-
-class ConfigInvalid(BaseModel):
-    model_config = {"frozen": True}
-    kind: Literal["invalid"]
-    errors: tuple[str, ...]
-
-type ConfigResult = ConfigLoaded | ConfigInvalid
-
-# Composition Root: The ONE place try/except is allowed
-def load_config(raw_env: dict) -> ConfigResult:
-    try:
-        config = EnvVars.model_validate(raw_env).to_domain()
-        return ConfigLoaded(kind="loaded", config=config)
-    except ValidationError as e:
-        return ConfigInvalid(kind="invalid", errors=tuple(str(err) for err in e.errors()))
+    # 2. Inject
+    app = create_app(config)
 ```
 
 ## Constraints
 
 | Required | Forbidden |
 |----------|-----------|
-| Separate `EnvVars` (Foreign) and `AppConfig` (Domain) | `BaseSettings` magic binding |
-| `Field(alias=...)` for env var names | `os.environ` access in domain |
-| `.to_domain()` translation method | Default values in config |
-| `ConfigLoaded \| ConfigInvalid` Sum Type | Implicit config failures |
-| `try/except` ONLY in composition root | `try/except` anywhere else |
-
+| **`AppConfig` inherits `BaseSettings`** | `os.environ` scattered in code |
+| **Lives in Domain (Schema Definition)** | Creating separate "Loader" classes |
+| Explicit `Field(alias=...)` mapping | `try/except` around config loading |
+| `frozen=True` (Immutable) | Mutable configuration |
+| **Typed Fields (PostgresDsn)** | **Stringly Typed Config (str)** |
+| **Crash on Missing Config** | Returning `ConfigResult` |

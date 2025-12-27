@@ -1,132 +1,73 @@
 # Pattern 05: Configuration (Dependency Injection)
 
 ## The Principle
-A model's behavior should be determined entirely by its inputs, enabling reasoning in isolation. Configuration is a "Foreign Reality" (Environment Variables) that must be translated into an "Internal Truth" (Domain Config) before entering the system.
+Configuration is the **Schema of the Environment**. Just as we define schemas for API requests, we define a schema for the process environment.
+
+We use `pydantic-settings` to define this schema directly. The `AppConfig` model **IS** the Domain's definition of what it needs from the outside world.
 
 ## The Mechanism
-We use the **Foreign Model Pattern** to handle configuration. `EnvVars` models the OS environment (Foreign Reality). `AppConfig` models the application settings (Internal Truth). Translation happens explicitly at the composition root.
+1.  **AppConfig (`BaseSettings`):** A single Pydantic model that defines all configuration.
+2.  **Declarative Mapping:** We use `Field(alias=...)` to map external names (`DB_URL`) to internal names (`db_url`).
+3.  **Automatic Loading:** Pydantic handles the I/O (env vars, .env files) at instantiation.
 
 ---
 
-## 1. The Magic Config (Anti-Pattern)
-Libraries that automagically bind `os.environ` to your domain objects create hidden coupling.
+## 1. The Magic Injection (Anti-Pattern)
+Using `os.environ` directly couples every file to the global state.
 
-### ❌ Anti-Pattern: Magic Settings
+### ❌ Anti-Pattern: Scattered Truth
 ```python
-from pydantic_settings import BaseSettings
-
-class Settings(BaseSettings):
-    db_url: str = Field(alias="DATABASE_URL")  # ❌ Hidden coupling
-
-def connect_db(settings: Settings = Settings()):  # ❌ Implicit global state
-    pass
+def connect_db():
+    # ❌ Logic pulls from global environment secretly
+    url = os.environ["DATABASE_URL"] 
 ```
 
 ---
 
-## 2. The Foreign Reality (EnvVars)
-We explicitly model the OS environment. All fields required—no defaults.
+## 2. The Config Model (AppConfig)
+We define the configuration explicitly in the Domain. This acts as the **Foreign Model** for the Environment. Note the use of specialized types like `PostgresDsn` and `ApiKey` instead of raw strings.
 
-### ✅ Pattern: The Environment Model
+### ✅ Pattern: Single Source of Truth
 ```python
-from pydantic import BaseModel, Field
+from pydantic import Field, PostgresDsn
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-class EnvVars(BaseModel):
-    """Foreign Model: The OS Environment."""
-    model_config = {"frozen": True}
+class AppConfig(BaseSettings):
+    """
+    Defines the contract: The Environment MUST provide these values.
+    """
+    model_config = SettingsConfigDict(env_file=".env", frozen=True)
     
-    db_url: str = Field(alias="DATABASE_URL")
-    debug_mode: str = Field(alias="DEBUG")  # NO DEFAULT—required
-    api_key: str = Field(alias="STRIPE_API_KEY")
-
-    def to_domain(self) -> "AppConfig":
-        return AppConfig(
-            database=DatabaseConfig(connection_string=self.db_url),
-            is_debug=self.debug_mode.lower() == "true",
-            stripe_key=self.api_key,
-        )
+    # External Name (alias) -> Internal Name (field)
+    database_url: PostgresDsn = Field(alias="DATABASE_URL")
+    api_key: ApiKey = Field(alias="STRIPE_API_KEY")
+    environment: EnvName = Field(alias="ENV", default=EnvName.PROD)
 ```
 
 ---
 
-## 3. The Internal Truth (AppConfig)
-The Domain Configuration is pure, structured, with no aliases, no defaults, and zero knowledge of `os`.
-
-### ✅ Pattern: The Pure Config
-```python
-class DatabaseConfig(BaseModel):
-    model_config = {"frozen": True}
-    connection_string: str
-
-class AppConfig(BaseModel):
-    """Internal Truth: Pure, Typed."""
-    model_config = {"frozen": True}
-    
-    database: DatabaseConfig
-    is_debug: bool
-    stripe_key: str
-```
-
----
-
-## 4. Config Parsing Result (Sum Type)
-Model config loading success or failure explicitly.
-
-### ✅ Pattern: Config Result
-```python
-from typing import Literal
-
-class ConfigLoaded(BaseModel):
-    model_config = {"frozen": True}
-    kind: Literal["loaded"]
-    config: AppConfig
-
-class ConfigInvalid(BaseModel):
-    model_config = {"frozen": True}
-    kind: Literal["invalid"]
-    errors: tuple[str, ...]
-
-type ConfigResult = ConfigLoaded | ConfigInvalid
-```
-
----
-
-## 5. Translation at Entry (Composition Root)
-The composition root is the **ONE place** where standalone wiring exists. It captures raw env, parses to Foreign Model, translates to domain.
+## 3. Composition Root (Crash on Failure)
+We load config **once** at startup. If the environment does not satisfy the schema (missing vars), the application **CRASHES**. This is "Correctness by Construction" applied to the runtime environment.
 
 ### ✅ Pattern: Explicit Loading
 ```python
-# src/main.py — Composition Root (the ONE exception)
-import os
-from pydantic import ValidationError
-
-def load_config(raw_env: dict) -> ConfigResult:
-    """Parse environment into config. No exceptions escape."""
-    try:
-        config = EnvVars.model_validate(raw_env).to_domain()
-        return ConfigLoaded(kind="loaded", config=config)
-    except ValidationError as e:
-        errors = tuple(str(err) for err in e.errors())
-        return ConfigInvalid(kind="invalid", errors=errors)
-
-
-# Composition root wiring
-raw_env = dict(os.environ)
-result = load_config(raw_env)
-
-match result:
-    case ConfigInvalid(errors=errs):
-        print(f"Invalid config: {errs}")
-        exit(1)
-    case ConfigLoaded(config=cfg):
-        app = create_app(cfg)
+def main():
+    # 1. Load & Validate
+    # If DATABASE_URL is missing, this raises ValidationError and crashes. Good.
+    config = AppConfig()
+    
+    # 2. Inject into Service Layer
+    db = Database(url=config.database_url)
+    
+    # 3. Inject into Domain (if needed, though Domain usually takes args)
+    # logic.do_thing(config.api_key)
 ```
 
 ---
 
 ## Cognitive Checks
-- [ ] **Separation:** Do I have separate `EnvVars` (Foreign) and `AppConfig` (Domain)?
-- [ ] **No Defaults in Domain:** Does `AppConfig` have zero default values?
-- [ ] **No Defaults in Foreign:** Does `EnvVars` require all fields explicitly?
-- [ ] **Result Type:** Is config parsing modeled as `ConfigLoaded | ConfigInvalid`?
-- [ ] **Composition Root:** Is try/except ONLY in the composition root?
+- [ ] **One Model:** Is there one `AppConfig` inheriting `BaseSettings`?
+- [ ] **Aliases:** Are `Field(alias=...)` used to map external names?
+- [ ] **Frozen:** Is `frozen=True` set?
+- [ ] **Typed Config:** Do I use `PostgresDsn`, `RedisDsn`, `ApiKey` instead of `str`?
+- [ ] **Crash Early:** Does `main()` instantiate it immediately?

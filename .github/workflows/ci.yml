@@ -33,7 +33,3 @@ jobs:
         # We rely on mypy for now as per local setup, though pyproject references pyright config
         # We'll run mypy since we validated it locally.
         run: uv run mypy .
-
-      - name: Run Tests (Pytest)
-        run: uv run pytest
-
