@@ -122,6 +122,52 @@ The Domain Model is **Active**. It owns its data, its rules, and its ability to 
 *   **Capabilities:** The "Hands." Injected tools (Clients) that allow the Model to affect the world.
 *   **Service Layer:** The "Factory Floor." Wires Capabilities into Models and starts the process.
 
+```mermaid
+flowchart TD
+    %% 1. Use flowchart TD for smoother curves
+    
+    subgraph COMP [main.py - Composition Root]
+        Config[[AppConfig]]
+        NC[(NatsClient)]
+        PG[(PostgresClient)]
+        Config --> NC
+        Config --> PG
+    end
+
+    subgraph SVC [service - Wiring]
+        Wire{{Construct & Inject}}
+    end
+
+    subgraph DOM [domain - Active Models]
+        ES[(EventStore)]
+        OS[(OrderStore)]
+        RT([OrderRuntime])
+        OM[Order.ship]
+        NS[ShippedOrder]
+        
+        RT -->|loads via| OS
+        RT -->|publishes via| ES
+        RT -- calls --> OM
+        OM -.->|returns| NS
+    end
+
+    subgraph API [api - Translation]
+        HTTP(POST /orders/ship)
+        RES(Response)
+    end
+
+    %% Wiring Flows
+    NC -.-> Wire
+    PG -.-> Wire
+    Wire ==>|Inject| ES
+    Wire ==>|Inject| OS
+    Wire ==>|Inject| RT
+    
+    %% Execution Flows
+    HTTP ==>|to_domain| RT
+    RT ==>|Result| RES
+```
+
 ---
 
 ## 🔧 Cursor Agent Architecture
